@@ -9,14 +9,16 @@ const timerBox=document.getElementById('timer');
 const state={
   user:null, days:[], day:null, session:null,
   settings:{auto_rest:true,sound_enabled:true,vibration_enabled:true},
-  timer:null,left:0,paused:false,tab:'treino',variants:{},
+  timer:null,left:0,paused:false,workoutClock:null,tab:'treino',variants:{},
   cardio:{modality:'Esteira',minutes:'',intensity:'moderado'}
 };
 
 const esc=s=>(s??'').toString().replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
 const num=v=>v===''||v==null?null:Number(String(v).replace(',','.'));
 const fmt=n=>String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');
-const duration=(a,b)=>{if(!a)return '—';const end=b?new Date(b):new Date();const m=Math.max(0,Math.round((end-new Date(a))/60000));return m<60?`${m} min`:`${Math.floor(m/60)}h ${m%60}min`};
+const duration=(a,b)=>{if(!a)return '—';const end=b?new Date(b):new Date();const total=Math.max(0,Math.floor((end-new Date(a))/1000));const h=Math.floor(total/3600);const m=Math.floor((total%3600)/60);const sec=total%60;return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`};
+const workoutLetter=d=>String.fromCharCode(64+Math.max(1,Number(d?.sort_order||1)));
+const workoutDisplayTitle=d=>{if(!d)return 'Treino';const parts=(d.title||'').split('—');const focus=parts.length>1?parts.slice(1).join('—').trim():(d.focus||'').split(';')[0].trim();return `Treino ${workoutLetter(d)}${focus?` — ${focus}`:''}`};
 const variantKey=exId=>`meu-treino:variant:${exId}`;
 const dataCacheKey=userId=>`meu-treino:data:${userId}`;
 const lastCacheKey=(exId,variantId)=>`meu-treino:last:${exId}:${variantId||'base'}`;
@@ -130,6 +132,7 @@ async function login(){
 }
 
 function renderTab(){
+  stopWorkoutClock();
   const c=document.getElementById('content');
   if(state.tab==='treino')return renderWorkout(c);
   if(state.tab==='historico')return renderHistory(c);
@@ -167,13 +170,13 @@ async function lastFor(ex,variant){
 }
 
 async function renderWorkout(c){
-  c.innerHTML=`<div class="card"><div class="daybar">${state.days.map(d=>`<button class="btn secondary day ${state.day?.id===d.id?'active':''}" data-day="${d.id}">${esc(d.title.split(' — ')[0])}</button>`).join('')}</div></div><div id="w"></div>`;
+  c.innerHTML=`<div class="card"><div class="daybar">${state.days.map(d=>`<button class="btn secondary day ${state.day?.id===d.id?'active':''}" data-day="${d.id}">${workoutLetter(d)}</button>`).join('')}</div></div><div id="w"></div>`;
   document.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{const next=state.days.find(d=>d.id===b.dataset.day);if(state.session&&next?.id!==state.session.workout_day_id)return alert('Finalize o treino em andamento antes de trocar de dia.');state.day=next;renderWorkout(c)});
   const w=document.getElementById('w');
   if(!state.day){w.innerHTML='<div class="card">Nenhum treino configurado.</div>';return}
   const pendingHistory=[];
   const renderedDayId=state.day.id;
-  let h=`<div class="card"><div class="small muted">${esc(state.day.focus||'')}</div><h2>${esc(state.day.title)}</h2>${state.session?`<div class="status">Treino em andamento · ${duration(state.session.started_at,null)}</div>`:''}<button id="start" class="btn" style="width:100%">${state.session?'Treino iniciado':'Iniciar treino'}</button>`;
+  let h=`<div class="card"><div class="small muted">${esc(state.day.focus||'')}</div><h2>${esc(workoutDisplayTitle(state.day))}</h2>${state.session?`<div class="status">Treino em andamento · <span id="workoutElapsed">${duration(state.session.started_at,null)}</span></div>`:''}<button id="start" class="btn" style="width:100%">${state.session?'Treino iniciado':'Iniciar treino'}</button>`;
   for(const ex of state.day.workout_exercises){
     const vars=(ex.workout_exercise_variants||[]).sort((a,b)=>a.sort_order-b.sort_order);
     const chosen=selectedVariant(ex);
@@ -193,6 +196,7 @@ async function renderWorkout(c){
   w.innerHTML=h;
   document.getElementById('start').onclick=startSession;
   document.getElementById('finish').onclick=finishSession;
+  if(state.session)startWorkoutClock();
   document.querySelectorAll('.saveSet').forEach(b=>b.onclick=()=>saveSet(b.closest('.exercise')));
   document.querySelectorAll('.variant').forEach(s=>s.onchange=()=>updateVariant(s.closest('.exercise')));
 
@@ -294,8 +298,24 @@ async function finishSession(){
 
   state.session=null;
   stopTimer();
+  stopWorkoutClock();
   alert('Treino finalizado e salvo.');
   render();
+}
+
+function startWorkoutClock(){
+  stopWorkoutClock();
+  const tick=()=>{
+    const el=document.getElementById('workoutElapsed');
+    if(!el||!state.session){stopWorkoutClock();return}
+    el.textContent=duration(state.session.started_at,null);
+  };
+  tick();
+  state.workoutClock=setInterval(tick,1000);
+}
+function stopWorkoutClock(){
+  if(state.workoutClock)clearInterval(state.workoutClock);
+  state.workoutClock=null;
 }
 
 function startTimer(sec){
@@ -313,10 +333,10 @@ function beep(){if(!state.settings.sound_enabled)return;try{const a=new AudioCon
 
 async function renderHistory(c){
   c.innerHTML='<div class="card"><h2>Histórico</h2><div id="hist" class="muted">Carregando…</div></div>';
-  const {data=[]}=await sb.from('workout_sessions').select('id,started_at,ended_at,workout_days(title),workout_set_logs(id),workout_cardio_logs(duration_minutes,modality,intensity)').order('started_at',{ascending:false}).limit(30);
+  const {data=[]}=await sb.from('workout_sessions').select('id,started_at,ended_at,workout_days(title,focus,sort_order),workout_set_logs(id),workout_cardio_logs(duration_minutes,modality,intensity)').order('started_at',{ascending:false}).limit(30);
   document.getElementById('hist').innerHTML=data.length?data.map(x=>{
     const cardio=x.workout_cardio_logs?.[0];
-    return `<div class="history-row"><div class="row between"><b>${esc(x.workout_days?.title||'Treino')}</b><button class="btn secondary deleteSession" data-id="${x.id}">Excluir</button></div><div class="small muted">${new Date(x.started_at).toLocaleString('pt-BR')} · ${x.workout_set_logs?.length||0} séries · ${duration(x.started_at,x.ended_at)}</div>${cardio?`<div class="small muted">Cardio: ${esc(cardio.modality||'')} · ${cardio.duration_minutes} min · ${esc(cardio.intensity||'')}</div>`:''}</div>`
+    return `<div class="history-row"><div class="row between"><b>${esc(workoutDisplayTitle(x.workout_days))}</b><button class="btn secondary deleteSession" data-id="${x.id}">Excluir</button></div><div class="small muted">${new Date(x.started_at).toLocaleString('pt-BR')} · ${x.workout_set_logs?.length||0} séries · ${duration(x.started_at,x.ended_at)}</div>${cardio?`<div class="small muted">Cardio: ${esc(cardio.modality||'')} · ${cardio.duration_minutes} min · ${esc(cardio.intensity||'')}</div>`:''}</div>`
   }).join(''):'Nenhum treino registrado.';
   document.querySelectorAll('.deleteSession').forEach(btn=>btn.onclick=()=>deleteSession(btn.dataset.id));
 }
