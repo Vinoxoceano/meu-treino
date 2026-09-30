@@ -329,7 +329,23 @@ function drawTimer(){
   document.getElementById('pause').onclick=()=>{state.paused=!state.paused;drawTimer()};
 }
 function stopTimer(){if(state.timer)clearInterval(state.timer);state.timer=null;timerBox.classList.add('hidden')}
-function beep(){if(!state.settings.sound_enabled)return;try{const a=new AudioContext(),o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=880;g.gain.value=.05;o.start();o.stop(a.currentTime+.18)}catch{}}
+function beep(){
+  if(!state.settings.sound_enabled)return;
+  try{
+    const a=new AudioContext();
+    [0,.32,.64].forEach(delay=>{
+      const o=a.createOscillator();
+      const g=a.createGain();
+      o.connect(g);g.connect(a.destination);
+      o.frequency.value=880;
+      g.gain.value=.08;
+      const start=a.currentTime+delay;
+      o.start(start);
+      o.stop(start+.18);
+    });
+    setTimeout(()=>{try{a.close()}catch{}},1100);
+  }catch{}
+}
 
 async function renderHistory(c){
   c.innerHTML='<div class="card"><h2>Histórico</h2><div id="hist" class="muted">Carregando…</div></div>';
