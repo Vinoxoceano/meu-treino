@@ -9,7 +9,7 @@ const timerBox=document.getElementById('timer');
 const state={
   user:null, days:[], day:null, session:null,
   settings:{auto_rest:true,sound_enabled:true,vibration_enabled:true},
-  timer:null,left:0,paused:false,workoutClock:null,tab:'treino',variants:{},
+  timer:null,left:0,paused:false,restEndAt:null,restPausedRemainingMs:null,workoutClock:null,tab:'treino',variants:{},
   cardio:{modality:'Esteira',minutes:'',intensity:'moderado'}
 };
 
@@ -319,16 +319,82 @@ function stopWorkoutClock(){
 }
 
 function startTimer(sec){
-  stopTimer();state.left=sec;state.paused=false;timerBox.classList.remove('hidden');drawTimer();
-  state.timer=setInterval(()=>{if(!state.paused){state.left--;drawTimer();if(state.left<=0){stopTimer();if(state.settings.vibration_enabled&&navigator.vibrate)navigator.vibrate([180,100,180]);beep()}}},1000);
+  stopTimer();
+  state.paused=false;
+  state.restPausedRemainingMs=null;
+  state.restEndAt=Date.now()+sec*1000;
+  state.left=sec;
+  timerBox.classList.remove('hidden');
+  drawTimer();
+  tickRestTimer();
+  state.timer=setInterval(tickRestTimer,500);
+}
+function tickRestTimer(){
+  if(state.paused||!state.restEndAt)return;
+  const remaining=state.restEndAt-Date.now();
+  if(remaining<=0){
+    finishRestTimer();
+    return;
+  }
+  const left=Math.ceil(remaining/1000);
+  if(left!==state.left){
+    state.left=left;
+    drawTimer();
+  }
+}
+function finishRestTimer(){
+  if(state.timer)clearInterval(state.timer);
+  state.timer=null;
+  state.left=0;
+  state.restEndAt=null;
+  state.restPausedRemainingMs=null;
+  state.paused=false;
+  timerBox.classList.add('hidden');
+  if(state.settings.vibration_enabled&&navigator.vibrate)navigator.vibrate([180,100,180,100,180]);
+  beep();
 }
 function drawTimer(){
   timerBox.innerHTML=`<div class="row between"><div><div class="small muted">DESCANSO</div><div class="time">${fmt(Math.max(0,state.left))}</div></div><button id="skip" class="btn secondary">Pular</button></div><div class="row" style="margin-top:8px"><button id="plus" class="btn secondary">+30 s</button><button id="pause" class="btn secondary">${state.paused?'Continuar':'Pausar'}</button></div>`;
   document.getElementById('skip').onclick=stopTimer;
-  document.getElementById('plus').onclick=()=>{state.left+=30;drawTimer()};
-  document.getElementById('pause').onclick=()=>{state.paused=!state.paused;drawTimer()};
+  document.getElementById('plus').onclick=()=>{
+    if(state.paused){
+      state.restPausedRemainingMs=(state.restPausedRemainingMs??state.left*1000)+30000;
+      state.left=Math.ceil(state.restPausedRemainingMs/1000);
+    }else if(state.restEndAt){
+      state.restEndAt+=30000;
+      state.left=Math.ceil((state.restEndAt-Date.now())/1000);
+    }
+    drawTimer();
+  };
+  document.getElementById('pause').onclick=()=>{
+    if(!state.paused){
+      state.restPausedRemainingMs=Math.max(0,(state.restEndAt??Date.now())-Date.now());
+      state.restEndAt=null;
+      state.paused=true;
+      state.left=Math.ceil(state.restPausedRemainingMs/1000);
+    }else{
+      state.paused=false;
+      state.restEndAt=Date.now()+(state.restPausedRemainingMs??state.left*1000);
+      state.restPausedRemainingMs=null;
+    }
+    drawTimer();
+  };
 }
-function stopTimer(){if(state.timer)clearInterval(state.timer);state.timer=null;timerBox.classList.add('hidden')}
+function stopTimer(){
+  if(state.timer)clearInterval(state.timer);
+  state.timer=null;
+  state.left=0;
+  state.restEndAt=null;
+  state.restPausedRemainingMs=null;
+  state.paused=false;
+  timerBox.classList.add('hidden');
+}
+function syncRestTimer(){
+  if(state.timer&&!state.paused)tickRestTimer();
+}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')syncRestTimer()});
+window.addEventListener('pageshow',syncRestTimer);
+window.addEventListener('focus',syncRestTimer);
 function beep(){
   if(!state.settings.sound_enabled)return;
   try{
