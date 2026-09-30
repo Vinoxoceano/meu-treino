@@ -8,19 +8,21 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Meu Treino" />
+  <meta name="application-name" content="Meu Treino" />
   <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png" />
-  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="stylesheet" href="/styles.css" />
   <title>Meu Treino</title>
 </head>
 <body>
-  <div id="installBox" class="install-box hidden">
-  <div><strong>Instalar Meu Treino</strong><div class="small muted">Use como aplicativo, sem o ícone do Chrome.</div></div>
-  <button id="installBtn" class="btn">Instalar</button>
-</div>
-<main id="app"></main>
+  <main id="app"></main>
   <div id="timer" class="timer hidden" aria-live="polite"></div>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
+    }
+  </script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>
