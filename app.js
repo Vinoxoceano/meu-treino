@@ -9,7 +9,7 @@ const timerBox=document.getElementById('timer');
 const state={
   user:null, days:[], day:null, session:null,
   settings:{auto_rest:true,sound_enabled:true,vibration_enabled:true},
-  timer:null,left:0,paused:false,restEndAt:null,restPausedRemainingMs:null,workoutClock:null,tab:'treino',variants:{},
+  timer:null,left:0,paused:false,restEndAt:null,restPausedRemainingMs:null,restNotificationId:null,pushEnabled:false,workoutClock:null,tab:'treino',variants:{},
   cardio:{modality:'Esteira',minutes:'',intensity:'moderado'}
 };
 
@@ -50,12 +50,111 @@ function setCachedLast(exId,variantId,value){
   try{localStorage.setItem(lastCacheKey(exId,variantId),JSON.stringify(value))}catch{}
 }
 
+
+function urlBase64ToUint8Array(base64String){
+  const padding='='.repeat((4-base64String.length%4)%4);
+  const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(base64);
+  return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+}
+
+async function getServiceWorkerRegistration(){
+  if(!('serviceWorker' in navigator))return null;
+  let reg=await navigator.serviceWorker.getRegistration();
+  if(!reg)reg=await navigator.serviceWorker.ready;
+  return reg;
+}
+
+async function refreshPushCapability(){
+  try{
+    if(!('Notification' in window)||!('PushManager' in window)){state.pushEnabled=false;return false}
+    const reg=await getServiceWorkerRegistration();
+    const sub=await reg?.pushManager?.getSubscription();
+    state.pushEnabled=!!sub && Notification.permission==='granted';
+    return state.pushEnabled;
+  }catch{
+    state.pushEnabled=false;
+    return false;
+  }
+}
+
+async function enablePushNotifications(){
+  if(!('Notification' in window)||!('PushManager' in window))throw new Error('Este aparelho não oferece notificações web compatíveis.');
+  const permission=await Notification.requestPermission();
+  if(permission!=='granted')throw new Error('Permissão de notificações não concedida.');
+
+  const {data:{session}}=await sb.auth.getSession();
+  if(!session)throw new Error('Sessão expirada. Entre novamente no app.');
+
+  const {data,error}=await sb.functions.invoke('workout-push-setup',{body:{action:'public-key'}});
+  if(error)throw error;
+  const publicKey=data?.publicKey;
+  if(!publicKey)throw new Error('Não foi possível configurar a chave de notificações.');
+
+  const reg=await getServiceWorkerRegistration();
+  let sub=await reg.pushManager.getSubscription();
+  if(!sub){
+    sub=await reg.pushManager.subscribe({
+      userVisibleOnly:true,
+      applicationServerKey:urlBase64ToUint8Array(publicKey)
+    });
+  }
+
+  const json=sub.toJSON();
+  const {error:saveError}=await sb.from('workout_push_subscriptions').upsert({
+    user_id:state.user.id,
+    endpoint:json.endpoint,
+    subscription:json,
+    user_agent:navigator.userAgent,
+    updated_at:new Date().toISOString()
+  },{onConflict:'endpoint'});
+  if(saveError)throw saveError;
+
+  state.pushEnabled=true;
+  return true;
+}
+
+async function scheduleRestPush(dueAt){
+  if(!state.pushEnabled||!state.user||!state.session||!dueAt)return;
+  try{
+    if(state.restNotificationId){
+      await sb.from('workout_rest_notifications')
+        .update({due_at:new Date(dueAt).toISOString(),canceled_at:null,processing_at:null})
+        .eq('id',state.restNotificationId)
+        .eq('user_id',state.user.id);
+      return;
+    }
+    const {data,error}=await sb.from('workout_rest_notifications').insert({
+      user_id:state.user.id,
+      session_id:state.session.id,
+      due_at:new Date(dueAt).toISOString(),
+      title:'Descanso concluído',
+      body:'Hora da próxima série.'
+    }).select('id').single();
+    if(!error&&data)state.restNotificationId=data.id;
+  }catch{}
+}
+
+async function cancelRestPush(){
+  const id=state.restNotificationId;
+  state.restNotificationId=null;
+  if(!id||!state.user)return;
+  try{
+    await sb.from('workout_rest_notifications')
+      .update({canceled_at:new Date().toISOString(),processing_at:null})
+      .eq('id',id)
+      .eq('user_id',state.user.id)
+      .is('sent_at',null);
+  }catch{}
+}
+
 async function boot(){
   const {data:{session}}=await sb.auth.getSession();
   if(session){
     state.user=session.user;
     if(restoreDataCache())render();
     await loadData();
+    await refreshPushCapability();
   }
   render();
 
@@ -325,6 +424,7 @@ function startTimer(sec){
   state.restEndAt=Date.now()+sec*1000;
   state.left=sec;
   timerBox.classList.remove('hidden');
+  scheduleRestPush(state.restEndAt);
   drawTimer();
   tickRestTimer();
   state.timer=setInterval(tickRestTimer,500);
@@ -348,6 +448,7 @@ function finishRestTimer(){
   state.left=0;
   state.restEndAt=null;
   state.restPausedRemainingMs=null;
+  state.restNotificationId=null;
   state.paused=false;
   timerBox.classList.add('hidden');
   if(state.settings.vibration_enabled&&navigator.vibrate)navigator.vibrate([180,100,180,100,180]);
@@ -363,6 +464,7 @@ function drawTimer(){
     }else if(state.restEndAt){
       state.restEndAt+=30000;
       state.left=Math.ceil((state.restEndAt-Date.now())/1000);
+      scheduleRestPush(state.restEndAt);
     }
     drawTimer();
   };
@@ -372,15 +474,18 @@ function drawTimer(){
       state.restEndAt=null;
       state.paused=true;
       state.left=Math.ceil(state.restPausedRemainingMs/1000);
+      cancelRestPush();
     }else{
       state.paused=false;
       state.restEndAt=Date.now()+(state.restPausedRemainingMs??state.left*1000);
       state.restPausedRemainingMs=null;
+      scheduleRestPush(state.restEndAt);
     }
     drawTimer();
   };
 }
 function stopTimer(){
+  cancelRestPush();
   if(state.timer)clearInterval(state.timer);
   state.timer=null;
   state.left=0;
@@ -452,11 +557,55 @@ async function saveBody(){
 }
 
 function renderSettings(c){
-  c.innerHTML=`<div class="card"><h2>Ajustes</h2><label class="row between" style="padding:10px 0"><span>Descanso automático</span><input id="auto" type="checkbox" ${state.settings.auto_rest!==false?'checked':''}></label><label class="row between" style="padding:10px 0"><span>Som ao finalizar</span><input id="sound" type="checkbox" ${state.settings.sound_enabled!==false?'checked':''}></label><label class="row between" style="padding:10px 0"><span>Vibração</span><input id="vib" type="checkbox" ${state.settings.vibration_enabled!==false?'checked':''}></label><button id="saveCfg" class="btn secondary" style="width:100%">Salvar</button></div>`;
+  c.innerHTML=`<div class="card"><h2>Ajustes</h2>
+    <label class="row between" style="padding:10px 0"><span>Descanso automático</span><input id="auto" type="checkbox" ${state.settings.auto_rest!==false?'checked':''}></label>
+    <label class="row between" style="padding:10px 0"><span>Som ao finalizar</span><input id="sound" type="checkbox" ${state.settings.sound_enabled!==false?'checked':''}></label>
+    <label class="row between" style="padding:10px 0"><span>Vibração</span><input id="vib" type="checkbox" ${state.settings.vibration_enabled!==false?'checked':''}></label>
+    <button id="saveCfg" class="btn secondary" style="width:100%">Salvar</button>
+  </div>
+  <div class="card">
+    <h3>Notificação do descanso</h3>
+    <p class="small muted">Com ela ativada, o Android pode avisar mesmo com a tela apagada. Se o relógio espelha as notificações do celular, o aviso também pode aparecer nele.</p>
+    <div id="pushStatus" class="status">Verificando…</div>
+    <button id="enablePush" class="btn" style="width:100%">Ativar notificações</button>
+  </div>`;
+
   document.getElementById('saveCfg').onclick=async()=>{
     const p={user_id:state.user.id,auto_rest:document.getElementById('auto').checked,sound_enabled:document.getElementById('sound').checked,vibration_enabled:document.getElementById('vib').checked};
     const {error}=await sb.from('workout_user_settings').upsert(p);
     if(error)alert(error.message);else{state.settings={...state.settings,...p};alert('Configurações salvas.')}
+  };
+
+  const status=document.getElementById('pushStatus');
+  const btn=document.getElementById('enablePush');
+
+  (async()=>{
+    await refreshPushCapability();
+    if(state.pushEnabled){
+      status.textContent='Ativadas neste aparelho';
+      btn.textContent='Notificações ativas';
+      btn.disabled=true;
+    }else if(Notification.permission==='denied'){
+      status.textContent='Bloqueadas pelo Android/Chrome. Libere a permissão de notificações para o Meu Treino.';
+      btn.textContent='Notificações bloqueadas';
+      btn.disabled=true;
+    }else{
+      status.textContent='Desativadas neste aparelho';
+    }
+  })();
+
+  btn.onclick=async()=>{
+    btn.disabled=true;
+    btn.textContent='Ativando…';
+    try{
+      await enablePushNotifications();
+      status.textContent='Ativadas neste aparelho';
+      btn.textContent='Notificações ativas';
+    }catch(e){
+      status.textContent=e?.message||'Não foi possível ativar.';
+      btn.textContent='Tentar novamente';
+      btn.disabled=false;
+    }
   };
 }
 
