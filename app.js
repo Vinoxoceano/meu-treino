@@ -1,27 +1,3 @@
-let deferredInstallPrompt=null;
-function refreshInstallUI(){
-  const box=document.getElementById('installBox');
-  if(!box)return;
-  const installed=window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true;
-  box.classList.toggle('hidden',installed || !deferredInstallPrompt);
-}
-window.addEventListener('beforeinstallprompt',e=>{
-  e.preventDefault();
-  deferredInstallPrompt=e;
-  refreshInstallUI();
-});
-window.addEventListener('appinstalled',()=>{
-  deferredInstallPrompt=null;
-  refreshInstallUI();
-});
-document.addEventListener('click',async e=>{
-  if(e.target?.id!=='installBtn' || !deferredInstallPrompt)return;
-  await deferredInstallPrompt.prompt();
-  await deferredInstallPrompt.userChoice;
-  deferredInstallPrompt=null;
-  refreshInstallUI();
-});
-
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL='https://moltssnwfnekeykqfraq.supabase.co';
@@ -44,11 +20,9 @@ const duration=(a,b)=>{if(!a)return '—';const end=b?new Date(b):new Date();con
 const variantKey=exId=>`meu-treino:variant:${exId}`;
 
 async function boot(){
-  if('serviceWorker' in navigator){try{await navigator.serviceWorker.register('/sw.js')}catch{}}
   const {data:{session}}=await sb.auth.getSession();
   if(session){state.user=session.user;await loadData()}
   render();
-  refreshInstallUI();
   sb.auth.onAuthStateChange(async(_e,s)=>{state.user=s?.user||null;state.session=null;if(state.user)await loadData();render()});
 }
 
