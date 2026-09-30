@@ -18,31 +18,95 @@ const num=v=>v===''||v==null?null:Number(String(v).replace(',','.'));
 const fmt=n=>String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');
 const duration=(a,b)=>{if(!a)return '—';const end=b?new Date(b):new Date();const m=Math.max(0,Math.round((end-new Date(a))/60000));return m<60?`${m} min`:`${Math.floor(m/60)}h ${m%60}min`};
 const variantKey=exId=>`meu-treino:variant:${exId}`;
+const dataCacheKey=userId=>`meu-treino:data:${userId}`;
+const lastCacheKey=(exId,variantId)=>`meu-treino:last:${exId}:${variantId||'base'}`;
+
+function normalizeDays(days=[]){
+  const sorted=[...days].sort((a,b)=>a.sort_order-b.sort_order);
+  sorted.forEach(d=>d.workout_exercises=(d.workout_exercises||[]).sort((a,b)=>a.sort_order-b.sort_order));
+  return sorted;
+}
+function restoreDataCache(){
+  if(!state.user)return false;
+  try{
+    const cached=JSON.parse(localStorage.getItem(dataCacheKey(state.user.id))||'null');
+    if(!cached?.days?.length)return false;
+    state.days=normalizeDays(cached.days);
+    state.settings=cached.settings||state.settings;
+    state.day=state.days.find(d=>d.weekday===new Date().getDay())||state.days[0]||null;
+    return true;
+  }catch{return false}
+}
+function saveDataCache(){
+  if(!state.user||!state.days.length)return;
+  try{localStorage.setItem(dataCacheKey(state.user.id),JSON.stringify({days:state.days,settings:state.settings}))}catch{}
+}
+function getCachedLast(exId,variantId){
+  try{return JSON.parse(localStorage.getItem(lastCacheKey(exId,variantId))||'null')}catch{return null}
+}
+function setCachedLast(exId,variantId,value){
+  try{localStorage.setItem(lastCacheKey(exId,variantId),JSON.stringify(value))}catch{}
+}
 
 async function boot(){
   const {data:{session}}=await sb.auth.getSession();
-  if(session){state.user=session.user;await loadData()}
+  if(session){
+    state.user=session.user;
+    if(restoreDataCache())render();
+    await loadData();
+  }
   render();
-  sb.auth.onAuthStateChange(async(_e,s)=>{state.user=s?.user||null;state.session=null;if(state.user)await loadData();render()});
+
+  sb.auth.onAuthStateChange(async(event,s)=>{
+    const nextUser=s?.user||null;
+    if(event==='SIGNED_OUT'||!nextUser){
+      if(state.user){
+        state.user=null;state.days=[];state.day=null;state.session=null;
+        render();
+      }
+      return;
+    }
+
+    const changedUser=state.user?.id!==nextUser.id;
+    state.user=nextUser;
+
+    // Supabase pode emitir SIGNED_IN novamente ao voltar ao app.
+    // Não recarregamos tudo se o mesmo usuário já está em memória.
+    if(event==='SIGNED_IN'&&(changedUser||!state.days.length)){
+      restoreDataCache();
+      render();
+      await loadData();
+      render();
+    }
+  });
 }
 
 async function loadData(){
-  const {data,error}=await sb.from('workout_programs')
+  if(!state.user)return;
+  const programQuery=sb.from('workout_programs')
     .select('id,name,workout_days(id,weekday,title,focus,sort_order,workout_exercises(id,name,variant_note,category,is_secondary,sort_order,working_sets,rep_min,rep_max,rest_seconds,workout_exercise_variants(id,name,is_default,sort_order,weight_increment_kg)))')
     .eq('active',true).order('created_at',{ascending:false}).limit(1).maybeSingle();
-  if(error)console.error(error);
-  state.days=(data?.workout_days||[]).sort((a,b)=>a.sort_order-b.sort_order);
-  state.days.forEach(d=>d.workout_exercises=(d.workout_exercises||[]).sort((a,b)=>a.sort_order-b.sort_order));
-  state.day=state.days.find(d=>d.weekday===new Date().getDay())||state.days[0]||null;
-  const {data:s}=await sb.from('workout_user_settings').select('*').maybeSingle();
-  if(s)state.settings=s;
-  await recoverOpenSession();
-}
+  const settingsQuery=sb.from('workout_user_settings').select('*').maybeSingle();
+  const sessionQuery=sb.from('workout_sessions').select('*')
+    .eq('user_id',state.user.id).is('ended_at',null)
+    .order('started_at',{ascending:false}).limit(1).maybeSingle();
 
-async function recoverOpenSession(){
-  if(!state.user)return;
-  const {data}=await sb.from('workout_sessions').select('*').eq('user_id',state.user.id).is('ended_at',null).order('started_at',{ascending:false}).limit(1).maybeSingle();
-  if(data){state.session=data;const d=state.days.find(x=>x.id===data.workout_day_id);if(d)state.day=d}
+  const [{data,error},{data:settings},{data:openSession}]=await Promise.all([programQuery,settingsQuery,sessionQuery]);
+  if(error)console.error(error);
+
+  const previousDayId=state.day?.id;
+  state.days=normalizeDays(data?.workout_days||state.days);
+  if(settings)state.settings=settings;
+
+  state.session=openSession||null;
+  if(openSession){
+    state.day=state.days.find(x=>x.id===openSession.workout_day_id)
+      ||state.days.find(d=>d.weekday===new Date().getDay())||state.days[0]||null;
+  }else{
+    state.day=state.days.find(d=>d.id===previousDayId)
+      ||state.days.find(d=>d.weekday===new Date().getDay())||state.days[0]||null;
+  }
+  saveDataCache();
 }
 
 function nav(){return `<div class="tabs">${['treino','historico','corpo','ajustes'].map(x=>`<button data-tab="${x}" class="${state.tab===x?'active':''}">${x[0].toUpperCase()+x.slice(1)}</button>`).join('')}</div>`}
@@ -88,7 +152,7 @@ async function lastFor(ex,variant){
     .eq('exercise_id',ex.id).order('completed_at',{ascending:false}).limit(60);
   q=variant?q.eq('variant_id',variant):q.is('variant_id',null);
   const {data=[]}=await q;
-  if(!data.length)return {text:'Sem histórico nesta variação.',weight:null,sessionId:null,sets:[]};
+  if(!data.length){const empty={text:'Sem histórico nesta variação.',weight:null,sessionId:null,sets:[],top:false,below:false};setCachedLast(ex.id,variant,empty);return empty;}
   const latestSession=data[0].session_id;
   const sets=data.filter(x=>x.session_id===latestSession).sort((a,b)=>a.set_number-b.set_number);
   const complete=sets.length>=ex.working_sets;
@@ -99,7 +163,7 @@ async function lastFor(ex,variant){
   let signal='';
   if(top)signal=' <span class="progress">· progressão disponível</span>';
   else if(below)signal=' <span class="warning">· carga talvez alta</span>';
-  return {text:`Último: ${weight??'—'} kg · ${sets.map(x=>x.reps).join(' / ')}${signal}`,weight,sessionId:latestSession,sets,top,below};
+  const result={text:`Último: ${weight??'—'} kg · ${sets.map(x=>x.reps).join(' / ')}${signal}`,weight,sessionId:latestSession,sets,top,below};setCachedLast(ex.id,variant,result);return result;
 }
 
 async function renderWorkout(c){
@@ -107,15 +171,19 @@ async function renderWorkout(c){
   document.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{state.day=state.days.find(d=>d.id===b.dataset.day);state.session=null;renderWorkout(c)});
   const w=document.getElementById('w');
   if(!state.day){w.innerHTML='<div class="card">Nenhum treino configurado.</div>';return}
+  const pendingHistory=[];
+  const renderedDayId=state.day.id;
   let h=`<div class="card"><div class="small muted">${esc(state.day.focus||'')}</div><h2>${esc(state.day.title)}</h2>${state.session?`<div class="status">Treino em andamento · ${duration(state.session.started_at,null)}</div>`:''}<button id="start" class="btn" style="width:100%">${state.session?'Treino iniciado':'Iniciar treino'}</button>`;
   for(const ex of state.day.workout_exercises){
     const vars=(ex.workout_exercise_variants||[]).sort((a,b)=>a.sort_order-b.sort_order);
     const chosen=selectedVariant(ex);
-    const last=await lastFor(ex,chosen?.id||null);
+    const variantId=chosen?.id||null;
+    const last=getCachedLast(ex.id,variantId)||{text:'Carregando histórico…',weight:null,top:false,below:false};
+    pendingHistory.push({ex,variantId});
     h+=`<div class="exercise" data-ex="${ex.id}"><div class="row between"><div><h3>${esc(ex.name)}</h3><div class="small muted">${ex.working_sets} × ${ex.rep_min}–${ex.rep_max} · descanso ${fmt(ex.rest_seconds)}</div></div>${ex.is_secondary?'<span class="tag">secundário</span>':''}</div>`;
     if(vars.length)h+=`<div class="field"><label class="small muted">Variação</label><select class="variant">${vars.map(v=>`<option value="${v.id}" ${v.id===chosen?.id?'selected':''}>${esc(v.name)}</option>`).join('')}</select></div>`;
     h+=`<div class="small muted last">${last.text}</div>`;
-    if(last.top)h+=`<div class="progress">Na próxima sessão, considere subir a carga e voltar para a parte baixa da faixa.</div>`;
+    h+=`<div class="progress nextProgress">${last.top?'Na próxima sessão, considere subir a carga e voltar para a parte baixa da faixa.':''}</div>`;
     for(let i=1;i<=ex.working_sets;i++){
       h+=`<div class="setrow" data-set="${i}"><b>${i}ª</b><div class="field"><label class="small muted">kg</label><input class="kg" inputmode="decimal" value="${last.weight??''}"></div><div class="field"><label class="small muted">reps</label><input class="reps" inputmode="numeric"></div><div class="field"><label class="small muted">RIR</label><select class="rir"><option value="">?</option><option>3</option><option>2</option><option>1</option><option>0</option></select></div></div>`;
     }
@@ -127,6 +195,24 @@ async function renderWorkout(c){
   document.getElementById('finish').onclick=finishSession;
   document.querySelectorAll('.saveSet').forEach(b=>b.onclick=()=>saveSet(b.closest('.exercise')));
   document.querySelectorAll('.variant').forEach(s=>s.onchange=()=>updateVariant(s.closest('.exercise')));
+
+  // Mostra o treino imediatamente e atualiza o histórico em segundo plano.
+  Promise.all(pendingHistory.map(async ({ex,variantId})=>({ex,variantId,last:await lastFor(ex,variantId)})))
+    .then(items=>{
+      if(state.day?.id!==renderedDayId)return;
+      for(const {ex,variantId,last} of items){
+        const el=document.querySelector(`.exercise[data-ex="${ex.id}"]`);
+        if(!el)continue;
+        const selected=el.querySelector('.variant')?.value||null;
+        if(selected!==variantId)continue;
+        const lastEl=el.querySelector('.last');
+        if(lastEl)lastEl.innerHTML=last.text;
+        const progressEl=el.querySelector('.nextProgress');
+        if(progressEl)progressEl.textContent=last.top?'Na próxima sessão, considere subir a carga e voltar para a parte baixa da faixa.':'';
+        if(last.weight!=null)el.querySelectorAll('.kg').forEach(input=>{if(!input.value)input.value=last.weight});
+      }
+    })
+    .catch(console.error);
 }
 
 async function startSession(){
@@ -163,6 +249,7 @@ async function updateVariant(el){
   state.variants[ex.id]=v;localStorage.setItem(variantKey(ex.id),v);
   const last=await lastFor(ex,v);
   el.querySelector('.last').innerHTML=last.text;
+  const progressEl=el.querySelector('.nextProgress');if(progressEl)progressEl.textContent=last.top?'Na próxima sessão, considere subir a carga e voltar para a parte baixa da faixa.':'';
   el.querySelectorAll('.kg').forEach(i=>i.value=last.weight??'');
 }
 
