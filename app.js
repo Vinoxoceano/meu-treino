@@ -168,7 +168,7 @@ async function lastFor(ex,variant){
 
 async function renderWorkout(c){
   c.innerHTML=`<div class="card"><div class="daybar">${state.days.map(d=>`<button class="btn secondary day ${state.day?.id===d.id?'active':''}" data-day="${d.id}">${esc(d.title.split(' — ')[0])}</button>`).join('')}</div></div><div id="w"></div>`;
-  document.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{state.day=state.days.find(d=>d.id===b.dataset.day);state.session=null;renderWorkout(c)});
+  document.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{const next=state.days.find(d=>d.id===b.dataset.day);if(state.session&&next?.id!==state.session.workout_day_id)return alert('Finalize o treino em andamento antes de trocar de dia.');state.day=next;renderWorkout(c)});
   const w=document.getElementById('w');
   if(!state.day){w.innerHTML='<div class="card">Nenhum treino configurado.</div>';return}
   const pendingHistory=[];
@@ -217,6 +217,16 @@ async function renderWorkout(c){
 
 async function startSession(){
   if(state.session)return;
+  const {data:open,error:openError}=await sb.from('workout_sessions').select('*')
+    .eq('user_id',state.user.id).is('ended_at',null)
+    .order('started_at',{ascending:false}).limit(1).maybeSingle();
+  if(openError)return alert(openError.message);
+  if(open){
+    state.session=open;
+    const d=state.days.find(x=>x.id===open.workout_day_id);
+    if(d)state.day=d;
+    return render();
+  }
   const {data,error}=await sb.from('workout_sessions').insert({user_id:state.user.id,workout_day_id:state.day.id}).select().single();
   if(error)return alert(error.message);
   state.session=data;render();
@@ -255,19 +265,37 @@ async function updateVariant(el){
 
 async function finishSession(){
   if(!state.session)return alert('Inicie o treino primeiro.');
+  const finishingId=state.session.id;
   const minutes=num(document.getElementById('cardioMin')?.value);
   if(minutes&&minutes>0){
     const {error:cardioError}=await sb.from('workout_cardio_logs').insert({
-      session_id:state.session.id,
+      session_id:finishingId,
       modality:document.getElementById('cardioMod').value,
       duration_minutes:Math.round(minutes),
       intensity:document.getElementById('cardioInt').value
     });
     if(cardioError)return alert(cardioError.message);
   }
-  const {error}=await sb.from('workout_sessions').update({ended_at:new Date().toISOString()}).eq('id',state.session.id);
+
+  const endedAt=new Date().toISOString();
+  const {data:closed,error}=await sb.from('workout_sessions')
+    .update({ended_at:endedAt})
+    .eq('id',finishingId)
+    .eq('user_id',state.user.id)
+    .is('ended_at',null)
+    .select('id,ended_at')
+    .maybeSingle();
+
   if(error)return alert(error.message);
-  state.session=null;stopTimer();alert('Treino salvo.');render();
+  if(!closed){
+    const {data:check,error:checkError}=await sb.from('workout_sessions').select('id,ended_at').eq('id',finishingId).maybeSingle();
+    if(checkError||!check?.ended_at)return alert('Não consegui confirmar o encerramento do treino. Tente novamente.');
+  }
+
+  state.session=null;
+  stopTimer();
+  alert('Treino finalizado e salvo.');
+  render();
 }
 
 function startTimer(sec){
@@ -288,8 +316,17 @@ async function renderHistory(c){
   const {data=[]}=await sb.from('workout_sessions').select('id,started_at,ended_at,workout_days(title),workout_set_logs(id),workout_cardio_logs(duration_minutes,modality,intensity)').order('started_at',{ascending:false}).limit(30);
   document.getElementById('hist').innerHTML=data.length?data.map(x=>{
     const cardio=x.workout_cardio_logs?.[0];
-    return `<div class="history-row"><b>${esc(x.workout_days?.title||'Treino')}</b><div class="small muted">${new Date(x.started_at).toLocaleString('pt-BR')} · ${x.workout_set_logs?.length||0} séries · ${duration(x.started_at,x.ended_at)}</div>${cardio?`<div class="small muted">Cardio: ${esc(cardio.modality||'')} · ${cardio.duration_minutes} min · ${esc(cardio.intensity||'')}</div>`:''}</div>`
+    return `<div class="history-row"><div class="row between"><b>${esc(x.workout_days?.title||'Treino')}</b><button class="btn secondary deleteSession" data-id="${x.id}">Excluir</button></div><div class="small muted">${new Date(x.started_at).toLocaleString('pt-BR')} · ${x.workout_set_logs?.length||0} séries · ${duration(x.started_at,x.ended_at)}</div>${cardio?`<div class="small muted">Cardio: ${esc(cardio.modality||'')} · ${cardio.duration_minutes} min · ${esc(cardio.intensity||'')}</div>`:''}</div>`
   }).join(''):'Nenhum treino registrado.';
+  document.querySelectorAll('.deleteSession').forEach(btn=>btn.onclick=()=>deleteSession(btn.dataset.id));
+}
+
+async function deleteSession(id){
+  if(!confirm('Excluir este treino do histórico? Séries e cardio desse treino também serão apagados.'))return;
+  const {error}=await sb.from('workout_sessions').delete().eq('id',id).eq('user_id',state.user.id);
+  if(error)return alert(error.message);
+  if(state.session?.id===id)state.session=null;
+  await renderHistory(document.getElementById('content'));
 }
 
 async function renderBody(c){
