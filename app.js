@@ -565,13 +565,52 @@ function beep(){
 }
 
 async function renderHistory(c){
-  c.innerHTML='<div class="card"><h2>Histórico</h2><div id="hist" class="muted">Carregando…</div></div>';
-  const {data=[]}=await sb.from('workout_sessions').select('id,started_at,ended_at,workout_days(title,focus,sort_order),workout_set_logs(id),workout_cardio_logs(duration_minutes,modality,intensity)').order('started_at',{ascending:false}).limit(30);
+  c.innerHTML='<div class="card"><h2>Histórico</h2><div id="hist" class="muted">Carregando…</div></div><div id="historyDetail"></div>';
+  const {data=[]}=await sb.from('workout_sessions')
+    .select('id,started_at,ended_at,workout_days(title,focus,sort_order),workout_set_logs(id),workout_cardio_logs(duration_minutes,modality,intensity)')
+    .eq('user_id',state.user.id)
+    .not('ended_at','is',null)
+    .order('started_at',{ascending:false}).limit(30);
   document.getElementById('hist').innerHTML=data.length?data.map(x=>{
     const cardio=x.workout_cardio_logs?.[0];
-    return `<div class="history-row"><div class="row between"><b>${esc(workoutDisplayTitle(x.workout_days))}</b><button class="btn secondary deleteSession" data-id="${x.id}">Excluir</button></div><div class="small muted">${new Date(x.started_at).toLocaleString('pt-BR')} · ${x.workout_set_logs?.length||0} séries · ${duration(x.started_at,x.ended_at)}</div>${cardio?`<div class="small muted">Cardio: ${esc(cardio.modality||'')} · ${cardio.duration_minutes} min · ${esc(cardio.intensity||'')}</div>`:''}</div>`
+    return `<div class="history-row"><div class="row between"><b>${esc(workoutDisplayTitle(x.workout_days))}</b><div class="row"><button class="btn ghost historyDetailBtn" data-id="${x.id}">Detalhes</button><button class="btn secondary deleteSession" data-id="${x.id}">Excluir</button></div></div><div class="small muted">${new Date(x.started_at).toLocaleString('pt-BR')} · ${x.workout_set_logs?.length||0} séries · ${duration(x.started_at,x.ended_at)}</div>${cardio?`<div class="small muted">Cardio: ${esc(cardio.modality||'')} · ${cardio.duration_minutes} min · ${esc(cardio.intensity||'')}</div>`:''}</div>`
   }).join(''):'Nenhum treino registrado.';
   document.querySelectorAll('.deleteSession').forEach(btn=>btn.onclick=()=>deleteSession(btn.dataset.id));
+  document.querySelectorAll('.historyDetailBtn').forEach(btn=>btn.onclick=()=>renderHistoryDetail(btn.dataset.id));
+}
+
+async function renderHistoryDetail(id){
+  const box=document.getElementById('historyDetail');
+  if(!box)return;
+  box.innerHTML='<div class="card muted">Carregando detalhes…</div>';
+  const {data:session,error}=await sb.from('workout_sessions')
+    .select('id,started_at,ended_at,workout_days(title,focus,sort_order),workout_cardio_logs(duration_minutes,modality,intensity)')
+    .eq('id',id).eq('user_id',state.user.id).single();
+  if(error){box.innerHTML=`<div class="card warning">${esc(error.message)}</div>`;return}
+  const {data:logs=[]}=await sb.from('workout_set_logs')
+    .select('id,exercise_id,variant_id,set_number,weight_kg,reps,rir,technique_status,workout_exercises(name,sort_order),workout_exercise_variants(name)')
+    .eq('session_id',id).order('completed_at');
+  const grouped=new Map();
+  logs.forEach(x=>{
+    if(!grouped.has(x.exercise_id))grouped.set(x.exercise_id,{name:x.workout_exercises?.name||'Exercício',sort:x.workout_exercises?.sort_order||99,variant:x.workout_exercise_variants?.name||'',rows:[]});
+    grouped.get(x.exercise_id).rows.push(x);
+  });
+  const groups=[...grouped.values()].sort((a,b)=>a.sort-b.sort);
+  const cardio=session.workout_cardio_logs?.[0];
+  box.innerHTML=`<div class="card"><div class="row between"><div><h2>${esc(workoutDisplayTitle(session.workout_days))}</h2><div class="small muted">${new Date(session.started_at).toLocaleString('pt-BR')} · ${duration(session.started_at,session.ended_at)}</div></div><button id="closeHistoryDetail" class="btn ghost">Fechar</button></div>
+    ${cardio?`<div class="status">Cardio: ${esc(cardio.modality||'')} · ${cardio.duration_minutes} min · ${esc(cardio.intensity||'')}</div>`:''}
+    ${groups.map(g=>`<div class="history-exercise"><b>${esc(g.name)}${g.variant?' — '+esc(g.variant):''}</b>${g.rows.sort((a,b)=>a.set_number-b.set_number).map(r=>`<div class="history-set" data-id="${r.id}"><span>${r.set_number}ª</span><input class="hkg" inputmode="decimal" value="${r.weight_kg??''}" aria-label="kg"><input class="hreps" inputmode="numeric" value="${r.reps??''}" aria-label="reps"><select class="hrir"><option value="" ${r.rir==null?'selected':''}>RIR ?</option>${[3,2,1,0].map(v=>`<option value="${v}" ${Number(r.rir)===v?'selected':''}>RIR ${v}</option>`).join('')}</select><label class="tiny"><input class="hpoor" type="checkbox" ${r.technique_status==='poor'?'checked':''}> comprometida</label><button class="btn ghost saveHistorySet">Salvar</button></div>`).join('')}</div>`).join('')}
+  </div>`;
+  document.getElementById('closeHistoryDetail').onclick=()=>box.innerHTML='';
+  box.querySelectorAll('.saveHistorySet').forEach(btn=>btn.onclick=()=>saveHistorySet(btn.closest('.history-set')));
+}
+
+async function saveHistorySet(row){
+  const p={weight_kg:num(row.querySelector('.hkg').value),reps:num(row.querySelector('.hreps').value),rir:num(row.querySelector('.hrir').value),technique_status:row.querySelector('.hpoor').checked?'poor':'normal'};
+  if(p.reps==null||p.reps<0)return alert('Informe as repetições válidas.');
+  const {error}=await sb.from('workout_set_logs').update(p).eq('id',row.dataset.id);
+  if(error)return alert(error.message);
+  row.querySelector('.saveHistorySet').textContent='Salvo ✓';
 }
 
 async function deleteSession(id){
