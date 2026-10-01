@@ -57,6 +57,27 @@ function clearDraft(card){const ex=card.closest('.exercise');try{localStorage.re
 function markSetDone(card){card.classList.add('done');card.querySelectorAll('input,select').forEach(x=>x.disabled=true);const btn=card.querySelector('.saveSet');if(btn){btn.disabled=true;btn.textContent='Concluída ✓'}clearDraft(card)}
 function updateExerciseProgress(el,ex){const done=el.querySelectorAll('.setcard.done').length;const count=el.querySelector('.exercise-count');if(count)count.textContent=`${done}/${ex.working_sets}`;if(done>=ex.working_sets){el.classList.add('complete','collapsed');const btn=el.querySelector('.collapseExercise');if(btn)btn.textContent='+'}}
 
+const offlineQueueKey=()=>`meu-treino:offline:${state.user?.id||'anon'}`;
+const activeSessionKey=()=>`meu-treino:active:${state.user?.id||'anon'}`;
+function readOfflineQueue(){try{return JSON.parse(localStorage.getItem(offlineQueueKey())||'[]')}catch{return []}}
+function writeOfflineQueue(q){try{localStorage.setItem(offlineQueueKey(),JSON.stringify(q))}catch{}}
+function queueOffline(type,payload){const q=readOfflineQueue();q.push({type,payload});writeOfflineQueue(q)}
+function saveActiveSession(){try{state.session?localStorage.setItem(activeSessionKey(),JSON.stringify(state.session)):localStorage.removeItem(activeSessionKey())}catch{}}
+function restoreActiveSession(){try{return JSON.parse(localStorage.getItem(activeSessionKey())||'null')}catch{return null}}
+async function flushOfflineQueue(){
+  if(!state.user||!navigator.onLine)return;
+  let q=readOfflineQueue();
+  while(q.length){
+    const item=q[0];let error=null;
+    if(item.type==='session')({error}=await sb.from('workout_sessions').upsert(item.payload,{onConflict:'id'}));
+    if(item.type==='set')({error}=await sb.from('workout_set_logs').upsert(item.payload,{onConflict:'session_id,exercise_id,set_number'}));
+    if(item.type==='finish')({error}=await sb.from('workout_sessions').update({ended_at:item.payload.ended_at}).eq('id',item.payload.id).eq('user_id',state.user.id));
+    if(item.type==='cardio')({error}=await sb.from('workout_cardio_logs').upsert(item.payload,{onConflict:'id'}));
+    if(error){console.warn('Sincronização pendente',error);break}
+    q.shift();writeOfflineQueue(q);
+  }
+}
+
 
 function urlBase64ToUint8Array(base64String){
   const padding='='.repeat((4-base64String.length%4)%4);
