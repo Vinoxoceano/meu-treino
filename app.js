@@ -655,6 +655,19 @@ async function saveBody(){
   if(error)alert(error.message);else{alert('Medidas salvas.');renderBody(document.getElementById('content'))}
 }
 
+async function sendTestNotification(){
+  if(!state.pushEnabled)throw new Error('Ative as notificações primeiro.');
+  const dueAt=new Date(Date.now()+10000).toISOString();
+  const {error}=await sb.from('workout_rest_notifications').insert({
+    user_id:state.user.id,
+    session_id:null,
+    due_at:dueAt,
+    title:'Teste do Meu Treino',
+    body:'Notificação funcionando. Se o relógio espelha o celular, ela também deve aparecer nele.'
+  });
+  if(error)throw error;
+}
+
 function renderSettings(c){
   c.innerHTML=`<div class="card"><h2>Ajustes</h2>
     <label class="row between" style="padding:10px 0"><span>Descanso automático</span><input id="auto" type="checkbox" ${state.settings.auto_rest!==false?'checked':''}></label>
@@ -664,9 +677,10 @@ function renderSettings(c){
   </div>
   <div class="card">
     <h3>Notificação do descanso</h3>
-    <p class="small muted">Com ela ativada, o Android pode avisar mesmo com a tela apagada. Se o relógio espelha as notificações do celular, o aviso também pode aparecer nele.</p>
+    <p class="small muted">O botão de teste envia uma notificação em 10 segundos. Ele serve só para conferir se celular e smartwatch estão recebendo normalmente.</p>
     <div id="pushStatus" class="status">Verificando…</div>
     <button id="enablePush" class="btn" style="width:100%">Ativar notificações</button>
+    <button id="testPush" class="btn ghost" style="width:100%;margin-top:8px">Testar em 10 s</button>
   </div>`;
 
   document.getElementById('saveCfg').onclick=async()=>{
@@ -677,6 +691,7 @@ function renderSettings(c){
 
   const status=document.getElementById('pushStatus');
   const btn=document.getElementById('enablePush');
+  const test=document.getElementById('testPush');
 
   (async()=>{
     await refreshPushCapability();
@@ -684,26 +699,41 @@ function renderSettings(c){
       status.textContent='Ativadas neste aparelho';
       btn.textContent='Notificações ativas';
       btn.disabled=true;
+      test.disabled=false;
     }else if(Notification.permission==='denied'){
       status.textContent='Bloqueadas pelo Android/Chrome. Libere a permissão de notificações para o Meu Treino.';
       btn.textContent='Notificações bloqueadas';
       btn.disabled=true;
+      test.disabled=true;
     }else{
       status.textContent='Desativadas neste aparelho';
+      test.disabled=true;
     }
   })();
 
   btn.onclick=async()=>{
-    btn.disabled=true;
-    btn.textContent='Ativando…';
+    btn.disabled=true;btn.textContent='Ativando…';
     try{
       await enablePushNotifications();
       status.textContent='Ativadas neste aparelho';
       btn.textContent='Notificações ativas';
+      test.disabled=false;
     }catch(e){
       status.textContent=e?.message||'Não foi possível ativar.';
       btn.textContent='Tentar novamente';
       btn.disabled=false;
+    }
+  };
+
+  test.onclick=async()=>{
+    test.disabled=true;test.textContent='Teste agendado…';
+    try{
+      await sendTestNotification();
+      status.textContent='Teste agendado para daqui a 10 segundos. Pode apagar a tela.';
+      setTimeout(()=>{test.disabled=false;test.textContent='Testar em 10 s'},12000);
+    }catch(e){
+      status.textContent=e?.message||'Não foi possível testar.';
+      test.disabled=false;test.textContent='Testar em 10 s';
     }
   };
 }
