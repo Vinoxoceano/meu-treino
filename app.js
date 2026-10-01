@@ -385,21 +385,34 @@ async function loadCurrentSessionSets(renderedDayId){
 }
 
 async function startSession(rerender=true){
-  if(state.session)return;
-  const {data:open,error:openError}=await sb.from('workout_sessions').select('*')
-    .eq('user_id',state.user.id).is('ended_at',null)
-    .order('started_at',{ascending:false}).limit(1).maybeSingle();
-  if(openError)return alert(openError.message);
-  if(open){
-    state.session=open;
-    const d=state.days.find(x=>x.id===open.workout_day_id);
-    if(d)state.day=d;
-    if(rerender)render();
-    return state.session;
+  if(state.session)return state.session;
+
+  if(navigator.onLine){
+    const {data:open}=await sb.from('workout_sessions').select('*')
+      .eq('user_id',state.user.id).is('ended_at',null)
+      .order('started_at',{ascending:false}).limit(1).maybeSingle();
+    if(open){
+      state.session=open;
+      saveActiveSession();
+      const d=state.days.find(x=>x.id===open.workout_day_id);if(d)state.day=d;
+      if(rerender)render();
+      return open;
+    }
+    const {data,error}=await sb.from('workout_sessions').insert({user_id:state.user.id,workout_day_id:state.day.id}).select().single();
+    if(!error&&data){
+      state.session=data;
+      saveActiveSession();
+      if(rerender)render();
+      return data;
+    }
   }
-  const {data,error}=await sb.from('workout_sessions').insert({user_id:state.user.id,workout_day_id:state.day.id}).select().single();
-  if(error)return alert(error.message);
-  state.session=data;if(rerender)render();return data;
+
+  const local={id:crypto.randomUUID(),user_id:state.user.id,workout_day_id:state.day.id,started_at:new Date().toISOString(),ended_at:null};
+  state.session=local;
+  saveActiveSession();
+  queueOffline('session',local);
+  if(rerender)render();
+  return local;
 }
 
 async function saveSet(card){
@@ -410,17 +423,19 @@ async function saveSet(card){
   const reps=num(card.querySelector('.reps').value);
   if(reps==null||reps<0)return alert('Informe as repetições válidas.');
   const payload={
-    session_id:state.session.id,
-    exercise_id:ex.id,
-    set_number:Number(card.dataset.set),
-    weight_kg:num(card.querySelector('.kg').value),
-    reps,
+    session_id:state.session.id,exercise_id:ex.id,set_number:Number(card.dataset.set),
+    weight_kg:num(card.querySelector('.kg').value),reps,
     rir:num(card.querySelector('.rir').value),
     technique_status:card.querySelector('.poor').checked?'poor':'normal',
-    variant_id:el.querySelector('.variant')?.value||null
+    variant_id:el.querySelector('.variant')?.value||null,
+    completed_at:new Date().toISOString()
   };
-  const {error}=await sb.from('workout_set_logs').upsert(payload,{onConflict:'session_id,exercise_id,set_number'});
-  if(error)return alert(error.message);
+  let saved=false;
+  if(navigator.onLine){
+    const {error}=await sb.from('workout_set_logs').upsert(payload,{onConflict:'session_id,exercise_id,set_number'});
+    saved=!error;
+  }
+  if(!saved)queueOffline('set',payload);
   markSetDone(card);
   updateExerciseProgress(el,ex);
   if(state.settings.auto_rest!==false)startTimer(ex.rest_seconds,{exercise:ex.name,setNumber:Number(card.dataset.set),nextSet:Number(card.dataset.set)+1,total:ex.working_sets});
@@ -428,6 +443,7 @@ async function saveSet(card){
 
 async function updateVariant(el){
   const ex=state.day.workout_exercises.find(x=>x.id===el.dataset.ex);
+  if(el.querySelectorAll('.setcard.done').length)return alert('A variação não pode ser alterada depois que uma série foi concluída.');
   const v=el.querySelector('.variant').value;
   state.variants[ex.id]=v;localStorage.setItem(variantKey(ex.id),v);
   const last=await lastFor(ex,v);
@@ -440,7 +456,7 @@ function showWorkoutSummary(summary){
   const old=document.getElementById('summaryModal');if(old)old.remove();
   const modal=document.createElement('div');
   modal.id='summaryModal';modal.className='modal';
-  modal.innerHTML=`<div class="modal-card"><div class="row between"><h2>Treino concluído</h2><button id="closeSummary" class="btn ghost">Fechar</button></div><div class="summary-grid"><div><div class="tiny muted">DURAÇÃO</div><div class="metric">${summary.duration}</div></div><div><div class="tiny muted">SÉRIES</div><div class="metric">${summary.sets}</div></div><div><div class="tiny muted">EXERCÍCIOS</div><div class="metric">${summary.exercises}</div></div></div>${summary.cardio?`<div class="status">Cardio: ${esc(summary.cardio)}</div>`:''}<div class="small muted">Os dados foram salvos no histórico. Você pode abrir Detalhes para revisar ou corrigir uma série.</div></div>`;
+  modal.innerHTML=`<div class="modal-card"><div class="row between"><h2>Treino concluído</h2><button id="closeSummary" class="btn ghost">Fechar</button></div><div class="summary-grid"><div><div class="tiny muted">DURAÇÃO</div><div class="metric">${summary.duration}</div></div><div><div class="tiny muted">SÉRIES</div><div class="metric">${summary.sets}</div></div><div><div class="tiny muted">EXERCÍCIOS</div><div class="metric">${summary.exercises}</div></div></div>${summary.cardio?`<div class="status">Cardio: ${esc(summary.cardio)}</div>`:''}<div class="small muted">${summary.offline?'Salvo neste aparelho. Será sincronizado quando a internet voltar.':'Salvo no histórico.'}</div></div>`;
   document.body.appendChild(modal);
   document.getElementById('closeSummary').onclick=()=>modal.remove();
 }
@@ -449,41 +465,35 @@ async function finishSession(){
   if(!state.session)return alert('Inicie o treino primeiro.');
   const finishing={...state.session};
   const finishingId=finishing.id;
+  const endedAt=new Date().toISOString();
   const minutes=num(document.getElementById('cardioMin')?.value);
   const modality=document.getElementById('cardioMod')?.value||'Esteira';
   const intensity=document.getElementById('cardioInt')?.value||'moderado';
   const setsDone=document.querySelectorAll('.setcard.done').length;
   const exercisesDone=[...document.querySelectorAll('.exercise')].filter(el=>el.querySelectorAll('.setcard.done').length>0).length;
+  let usedOffline=!navigator.onLine;
 
   if(minutes&&minutes>0){
-    const {error:cardioError}=await sb.from('workout_cardio_logs').insert({session_id:finishingId,modality,duration_minutes:Math.round(minutes),intensity});
-    if(cardioError)return alert(cardioError.message);
+    const cardio={id:crypto.randomUUID(),session_id:finishingId,modality,duration_minutes:Math.round(minutes),intensity};
+    let saved=false;
+    if(navigator.onLine){const {error}=await sb.from('workout_cardio_logs').upsert(cardio,{onConflict:'id'});saved=!error}
+    if(!saved){queueOffline('cardio',cardio);usedOffline=true}
   }
 
-  const endedAt=new Date().toISOString();
-  const {data:closed,error}=await sb.from('workout_sessions')
-    .update({ended_at:endedAt})
-    .eq('id',finishingId)
-    .eq('user_id',state.user.id)
-    .is('ended_at',null)
-    .select('id,ended_at')
-    .maybeSingle();
-  if(error)return alert(error.message);
-  if(!closed){
-    const {data:check,error:checkError}=await sb.from('workout_sessions').select('id,ended_at').eq('id',finishingId).maybeSingle();
-    if(checkError||!check?.ended_at)return alert('Não consegui confirmar o encerramento do treino. Tente novamente.');
+  let closed=false;
+  if(navigator.onLine){
+    const {data,error}=await sb.from('workout_sessions').update({ended_at:endedAt}).eq('id',finishingId).eq('user_id',state.user.id).is('ended_at',null).select('id,ended_at').maybeSingle();
+    closed=!error&&!!data?.ended_at;
   }
+  if(!closed){queueOffline('finish',{id:finishingId,ended_at:endedAt});usedOffline=true}
 
   state.session=null;
+  saveActiveSession();
   stopTimer();
   stopWorkoutClock();
+  if(navigator.onLine)flushOfflineQueue();
   render();
-  showWorkoutSummary({
-    duration:duration(finishing.started_at,endedAt),
-    sets:setsDone,
-    exercises:exercisesDone,
-    cardio:minutes&&minutes>0 ? modality+' · '+Math.round(minutes)+' min · '+intensity : ''
-  });
+  showWorkoutSummary({duration:duration(finishing.started_at,endedAt),sets:setsDone,exercises:exercisesDone,cardio:minutes&&minutes>0?modality+' · '+Math.round(minutes)+' min · '+intensity:'',offline:usedOffline});
 }
 
 function startWorkoutClock(){
