@@ -289,40 +289,60 @@ async function renderWorkout(c){
     const variantId=chosen?.id||null;
     const last=getCachedLast(ex.id,variantId)||{text:'Carregando histórico…',weight:null,top:false,below:false};
     pendingHistory.push({ex,variantId});
-    h+=`<div class="exercise" data-ex="${ex.id}"><div class="row between"><div><h3>${esc(ex.name)}</h3><div class="small muted">${ex.working_sets} × ${ex.rep_min}–${ex.rep_max} · descanso ${fmt(ex.rest_seconds)}</div></div>${ex.is_secondary?'<span class="tag">secundário</span>':''}</div>`;
+    h+=`<div class="exercise" data-ex="${ex.id}"><div class="exercise-head row between"><div><h3>${esc(ex.name)}</h3><div class="small muted">${ex.working_sets} × ${ex.rep_min}–${ex.rep_max} · descanso ${fmt(ex.rest_seconds)}</div></div><div class="row"><span class="exercise-count tiny muted">0/${ex.working_sets}</span>${ex.is_secondary?'<span class="tag">secundário</span>':''}<button class="collapseExercise btn ghost" type="button">−</button></div></div><div class="exercise-body">`;
     if(vars.length)h+=`<div class="field"><label class="small muted">Variação</label><select class="variant">${vars.map(v=>`<option value="${v.id}" ${v.id===chosen?.id?'selected':''}>${esc(v.name)}</option>`).join('')}</select></div>`;
-    h+=`<div class="small muted last">${last.text}</div>`;
-    h+=`<div class="progress nextProgress">${last.top?'Na próxima sessão, considere subir a carga e voltar para a parte baixa da faixa.':''}</div>`;
+    h+=`<div class="small muted last">${last.text}</div><div class="progress nextProgress">${last.top?'Na próxima sessão, considere subir a carga e voltar para a parte baixa da faixa.':''}</div>`;
     for(let i=1;i<=ex.working_sets;i++){
-      h+=`<div class="setrow" data-set="${i}"><b>${i}ª</b><div class="field"><label class="small muted">kg</label><input class="kg" inputmode="decimal" value="${last.weight??''}"></div><div class="field"><label class="small muted">reps</label><input class="reps" inputmode="numeric"></div><div class="field"><label class="small muted">RIR</label><select class="rir"><option value="">?</option><option>3</option><option>2</option><option>1</option><option>0</option></select></div></div>`;
+      h+=`<div class="setcard" data-set="${i}"><div class="setrow"><b>${i}ª</b><div class="field"><label class="small muted">kg</label><input class="kg" inputmode="decimal" value="${last.weight??''}"></div><div class="field"><label class="small muted">reps</label><input class="reps" inputmode="numeric"></div><div class="field"><label class="small muted">RIR</label><select class="rir"><option value="">?</option><option>3</option><option>2</option><option>1</option><option>0</option></select></div></div><div class="setactions row between"><label class="row small muted"><input class="poor" type="checkbox"> Execução comprometida</label><button class="btn secondary saveSet" type="button">Concluir série</button></div></div>`;
     }
-    h+=`<label class="row small muted"><input class="poor" type="checkbox"> marcar próxima série como execução comprometida</label><button class="btn secondary saveSet" style="width:100%;margin-top:8px">Concluir próxima série</button></div>`;
+    h+=`</div></div>`;
   }
   h+=`<div class="section-title"><h3>Cardio pós-treino</h3><div class="cardio-grid"><div class="field wide"><label class="small muted">Modalidade</label><select id="cardioMod"><option>Esteira</option><option>Bicicleta</option><option>Elíptico</option><option>Escada</option><option>Outro</option></select></div><div class="field"><label class="small muted">Minutos</label><input id="cardioMin" inputmode="numeric" placeholder="0"></div><div class="field"><label class="small muted">Intensidade</label><select id="cardioInt"><option value="leve">Leve</option><option value="moderado" selected>Moderado</option><option value="intenso">Intenso</option></select></div></div></div><button id="finish" class="btn" style="width:100%;margin-top:16px">Finalizar treino</button></div>`;
   w.innerHTML=h;
   document.getElementById('start').onclick=startSession;
   document.getElementById('finish').onclick=finishSession;
   if(state.session)startWorkoutClock();
-  document.querySelectorAll('.saveSet').forEach(b=>b.onclick=()=>saveSet(b.closest('.exercise')));
-  document.querySelectorAll('.variant').forEach(s=>s.onchange=()=>updateVariant(s.closest('.exercise')));
+  document.querySelectorAll('.setcard').forEach(card=>{
+    restoreDraft(card);
+    card.querySelectorAll('input,select').forEach(input=>{input.addEventListener('input',()=>saveDraft(card));input.addEventListener('change',()=>saveDraft(card))});
+    card.querySelector('.saveSet').onclick=()=>saveSet(card);
+  });
+  document.querySelectorAll('.variant').forEach(sel=>sel.onchange=()=>updateVariant(sel.closest('.exercise')));
+  document.querySelectorAll('.collapseExercise').forEach(btn=>btn.onclick=()=>{const exEl=btn.closest('.exercise');exEl.classList.toggle('collapsed');btn.textContent=exEl.classList.contains('collapsed')?'+':'−'});
+  if(state.session)loadCurrentSessionSets(renderedDayId);
 
-  // Mostra o treino imediatamente e atualiza o histórico em segundo plano.
-  Promise.all(pendingHistory.map(async ({ex,variantId})=>({ex,variantId,last:await lastFor(ex,variantId)})))
-    .then(items=>{
-      if(state.day?.id!==renderedDayId)return;
-      for(const {ex,variantId,last} of items){
-        const el=document.querySelector(`.exercise[data-ex="${ex.id}"]`);
-        if(!el)continue;
-        const selected=el.querySelector('.variant')?.value||null;
-        if(selected!==variantId)continue;
-        const lastEl=el.querySelector('.last');
-        if(lastEl)lastEl.innerHTML=last.text;
-        const progressEl=el.querySelector('.nextProgress');
-        if(progressEl)progressEl.textContent=last.top?'Na próxima sessão, considere subir a carga e voltar para a parte baixa da faixa.':'';
-        if(last.weight!=null)el.querySelectorAll('.kg').forEach(input=>{if(!input.value)input.value=last.weight});
-      }
-    })
-    .catch(console.error);
+  Promise.all(pendingHistory.map(async ({ex,variantId})=>({ex,variantId,last:await lastFor(ex,variantId)}))).then(items=>{
+    if(state.day?.id!==renderedDayId)return;
+    for(const {ex,variantId,last} of items){
+      const el=document.querySelector(`.exercise[data-ex="${ex.id}"]`);
+      if(!el)continue;
+      const selected=el.querySelector('.variant')?.value||null;
+      if(selected!==variantId)continue;
+      const lastEl=el.querySelector('.last');if(lastEl)lastEl.innerHTML=last.text;
+      const progressEl=el.querySelector('.nextProgress');if(progressEl)progressEl.textContent=last.suggestion|| (last.top?'Na próxima sessão, considere subir a carga e voltar para a parte baixa da faixa.':'');
+      if(last.weight!=null)el.querySelectorAll('.setcard:not(.done) .kg').forEach(input=>{if(!input.value)input.value=last.weight});
+    }
+  }).catch(console.error);
+}
+
+async function loadCurrentSessionSets(renderedDayId){
+  if(!state.session)return;
+  const {data=[]}=await sb.from('workout_set_logs').select('*').eq('session_id',state.session.id);
+  if(state.day?.id!==renderedDayId)return;
+  for(const ex of state.day.workout_exercises){
+    const el=document.querySelector(`.exercise[data-ex="${ex.id}"]`);
+    if(!el)continue;
+    for(const log of data.filter(x=>x.exercise_id===ex.id)){
+      const card=el.querySelector(`.setcard[data-set="${log.set_number}"]`);
+      if(!card)continue;
+      card.querySelector('.kg').value=log.weight_kg??'';
+      card.querySelector('.reps').value=log.reps??'';
+      card.querySelector('.rir').value=log.rir??'';
+      card.querySelector('.poor').checked=log.technique_status==='poor';
+      markSetDone(card);
+    }
+    updateExerciseProgress(el,ex);
+  }
 }
 
 async function startSession(){
