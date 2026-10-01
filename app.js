@@ -345,7 +345,7 @@ async function loadCurrentSessionSets(renderedDayId){
   }
 }
 
-async function startSession(){
+async function startSession(rerender=true){
   if(state.session)return;
   const {data:open,error:openError}=await sb.from('workout_sessions').select('*')
     .eq('user_id',state.user.id).is('ended_at',null)
@@ -355,32 +355,36 @@ async function startSession(){
     state.session=open;
     const d=state.days.find(x=>x.id===open.workout_day_id);
     if(d)state.day=d;
-    return render();
+    if(rerender)render();
+    return state.session;
   }
   const {data,error}=await sb.from('workout_sessions').insert({user_id:state.user.id,workout_day_id:state.day.id}).select().single();
   if(error)return alert(error.message);
-  state.session=data;render();
+  state.session=data;if(rerender)render();return data;
 }
 
-async function saveSet(el){
-  if(!state.session)await startSession();
+async function saveSet(card){
+  if(!state.session)await startSession(false);
   if(!state.session)return;
+  const el=card.closest('.exercise');
   const ex=state.day.workout_exercises.find(x=>x.id===el.dataset.ex);
-  const row=[...el.querySelectorAll('.setrow')].find(x=>!x.classList.contains('done'));
-  if(!row)return alert('Todas as séries foram registradas.');
-  const reps=num(row.querySelector('.reps').value);
+  const reps=num(card.querySelector('.reps').value);
   if(reps==null||reps<0)return alert('Informe as repetições válidas.');
   const payload={
-    session_id:state.session.id,exercise_id:ex.id,set_number:Number(row.dataset.set),
-    weight_kg:num(row.querySelector('.kg').value),reps,
-    rir:num(row.querySelector('.rir').value),
-    technique_status:el.querySelector('.poor').checked?'poor':'normal',
+    session_id:state.session.id,
+    exercise_id:ex.id,
+    set_number:Number(card.dataset.set),
+    weight_kg:num(card.querySelector('.kg').value),
+    reps,
+    rir:num(card.querySelector('.rir').value),
+    technique_status:card.querySelector('.poor').checked?'poor':'normal',
     variant_id:el.querySelector('.variant')?.value||null
   };
-  const {error}=await sb.from('workout_set_logs').insert(payload);
+  const {error}=await sb.from('workout_set_logs').upsert(payload,{onConflict:'session_id,exercise_id,set_number'});
   if(error)return alert(error.message);
-  row.classList.add('done');el.querySelector('.poor').checked=false;
-  if(state.settings.auto_rest!==false)startTimer(ex.rest_seconds);
+  markSetDone(card);
+  updateExerciseProgress(el,ex);
+  if(state.settings.auto_rest!==false)startTimer(ex.rest_seconds,{exercise:ex.name,setNumber:Number(card.dataset.set),nextSet:Number(card.dataset.set)+1,total:ex.working_sets});
 }
 
 async function updateVariant(el){
