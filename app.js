@@ -180,9 +180,11 @@ async function boot(){
   const {data:{session}}=await sb.auth.getSession();
   if(session){
     state.user=session.user;
+    state.session=restoreActiveSession();
     if(restoreDataCache())render();
     await loadData();
     await refreshPushCapability();
+    await flushOfflineQueue();
   }
   render();
 
@@ -202,9 +204,11 @@ async function boot(){
     // Supabase pode emitir SIGNED_IN novamente ao voltar ao app.
     // Não recarregamos tudo se o mesmo usuário já está em memória.
     if(event==='SIGNED_IN'&&(changedUser||!state.days.length)){
+      state.session=restoreActiveSession();
       restoreDataCache();
       render();
       await loadData();
+      await flushOfflineQueue();
       render();
     }
   });
@@ -227,14 +231,16 @@ async function loadData(){
   state.days=normalizeDays(data?.workout_days||state.days);
   if(settings)state.settings=settings;
 
-  state.session=openSession||null;
-  if(openSession){
-    state.day=state.days.find(x=>x.id===openSession.workout_day_id)
+  const localOpen=restoreActiveSession();
+  state.session=openSession||localOpen||null;
+  if(state.session){
+    state.day=state.days.find(x=>x.id===state.session.workout_day_id)
       ||state.days.find(d=>d.weekday===new Date().getDay())||state.days[0]||null;
   }else{
     state.day=state.days.find(d=>d.id===previousDayId)
       ||state.days.find(d=>d.weekday===new Date().getDay())||state.days[0]||null;
   }
+  saveActiveSession();
   saveDataCache();
 }
 
@@ -759,4 +765,5 @@ function renderSettings(c){
   };
 }
 
+window.addEventListener('online',flushOfflineQueue);
 boot();
