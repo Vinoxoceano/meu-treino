@@ -409,17 +409,27 @@ async function updateVariant(el){
   el.querySelectorAll('.kg').forEach(i=>i.value=last.weight??'');
 }
 
+function showWorkoutSummary(summary){
+  const old=document.getElementById('summaryModal');if(old)old.remove();
+  const modal=document.createElement('div');
+  modal.id='summaryModal';modal.className='modal';
+  modal.innerHTML=`<div class="modal-card"><div class="row between"><h2>Treino concluído</h2><button id="closeSummary" class="btn ghost">Fechar</button></div><div class="summary-grid"><div><div class="tiny muted">DURAÇÃO</div><div class="metric">${summary.duration}</div></div><div><div class="tiny muted">SÉRIES</div><div class="metric">${summary.sets}</div></div><div><div class="tiny muted">EXERCÍCIOS</div><div class="metric">${summary.exercises}</div></div></div>${summary.cardio?`<div class="status">Cardio: ${esc(summary.cardio)}</div>`:''}<div class="small muted">Os dados foram salvos no histórico. Você pode abrir Detalhes para revisar ou corrigir uma série.</div></div>`;
+  document.body.appendChild(modal);
+  document.getElementById('closeSummary').onclick=()=>modal.remove();
+}
+
 async function finishSession(){
   if(!state.session)return alert('Inicie o treino primeiro.');
-  const finishingId=state.session.id;
+  const finishing={...state.session};
+  const finishingId=finishing.id;
   const minutes=num(document.getElementById('cardioMin')?.value);
+  const modality=document.getElementById('cardioMod')?.value||'Esteira';
+  const intensity=document.getElementById('cardioInt')?.value||'moderado';
+  const setsDone=document.querySelectorAll('.setcard.done').length;
+  const exercisesDone=[...document.querySelectorAll('.exercise')].filter(el=>el.querySelectorAll('.setcard.done').length>0).length;
+
   if(minutes&&minutes>0){
-    const {error:cardioError}=await sb.from('workout_cardio_logs').insert({
-      session_id:finishingId,
-      modality:document.getElementById('cardioMod').value,
-      duration_minutes:Math.round(minutes),
-      intensity:document.getElementById('cardioInt').value
-    });
+    const {error:cardioError}=await sb.from('workout_cardio_logs').insert({session_id:finishingId,modality,duration_minutes:Math.round(minutes),intensity});
     if(cardioError)return alert(cardioError.message);
   }
 
@@ -431,7 +441,6 @@ async function finishSession(){
     .is('ended_at',null)
     .select('id,ended_at')
     .maybeSingle();
-
   if(error)return alert(error.message);
   if(!closed){
     const {data:check,error:checkError}=await sb.from('workout_sessions').select('id,ended_at').eq('id',finishingId).maybeSingle();
@@ -441,8 +450,13 @@ async function finishSession(){
   state.session=null;
   stopTimer();
   stopWorkoutClock();
-  alert('Treino finalizado e salvo.');
   render();
+  showWorkoutSummary({
+    duration:duration(finishing.started_at,endedAt),
+    sets:setsDone,
+    exercises:exercisesDone,
+    cardio:minutes&&minutes>0 ? modality+' · '+Math.round(minutes)+' min · '+intensity : ''
+  });
 }
 
 function startWorkoutClock(){
