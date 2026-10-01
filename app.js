@@ -136,7 +136,7 @@ async function scheduleRestPush(dueAt){
       session_id:state.session.id,
       due_at:new Date(dueAt).toISOString(),
       title:'Descanso concluído',
-      body:'Hora da próxima série.'
+      body:state.restContext ? (state.restContext.exercise+': '+(state.restContext.nextSet<=state.restContext.total ? ('hora da '+state.restContext.nextSet+'ª série.') : 'exercício concluído.')) : 'Hora da próxima série.'
     }).select('id').single();
     if(!error&&data)state.restNotificationId=data.id;
   }catch{}
@@ -525,6 +525,7 @@ function stopTimer(){
   state.restEndAt=null;
   state.restPausedRemainingMs=null;
   state.paused=false;
+  state.restContext=null;
   timerBox.classList.add('hidden');
 }
 function syncRestTimer(){
