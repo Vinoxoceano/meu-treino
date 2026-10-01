@@ -50,6 +50,13 @@ function setCachedLast(exId,variantId,value){
   try{localStorage.setItem(lastCacheKey(exId,variantId),JSON.stringify(value))}catch{}
 }
 
+const draftKey=(dayId,exId,setNo)=>`meu-treino:draft:${state.user?.id||'anon'}:${dayId}:${exId}:${setNo}`;
+function saveDraft(card){if(!state.day)return;const ex=card.closest('.exercise');const p={variantId:ex.querySelector('.variant')?.value||null,weight:card.querySelector('.kg')?.value||'',reps:card.querySelector('.reps')?.value||'',rir:card.querySelector('.rir')?.value||'',poor:!!card.querySelector('.poor')?.checked};try{localStorage.setItem(draftKey(state.day.id,ex.dataset.ex,Number(card.dataset.set)),JSON.stringify(p))}catch{}}
+function restoreDraft(card){if(!state.day)return;const ex=card.closest('.exercise');try{const d=JSON.parse(localStorage.getItem(draftKey(state.day.id,ex.dataset.ex,Number(card.dataset.set)))||'null');if(!d)return;const v=ex.querySelector('.variant')?.value||null;if(d.variantId!==v)return;if(d.weight!==undefined)card.querySelector('.kg').value=d.weight;if(d.reps!==undefined)card.querySelector('.reps').value=d.reps;if(d.rir!==undefined)card.querySelector('.rir').value=d.rir;const poor=card.querySelector('.poor');if(poor)poor.checked=!!d.poor}catch{}}
+function clearDraft(card){const ex=card.closest('.exercise');try{localStorage.removeItem(draftKey(state.day.id,ex.dataset.ex,Number(card.dataset.set)))}catch{}}
+function markSetDone(card){card.classList.add('done');card.querySelectorAll('input,select').forEach(x=>x.disabled=true);const btn=card.querySelector('.saveSet');if(btn){btn.disabled=true;btn.textContent='Concluída ✓'}clearDraft(card)}
+function updateExerciseProgress(el,ex){const done=el.querySelectorAll('.setcard.done').length;const count=el.querySelector('.exercise-count');if(count)count.textContent=`${done}/${ex.working_sets}`;if(done>=ex.working_sets){el.classList.add('complete','collapsed');const btn=el.querySelector('.collapseExercise');if(btn)btn.textContent='+'}}
+
 
 function urlBase64ToUint8Array(base64String){
   const padding='='.repeat((4-base64String.length%4)%4);
