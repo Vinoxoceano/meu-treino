@@ -405,7 +405,7 @@ async function updateVariant(el){
   state.variants[ex.id]=v;localStorage.setItem(variantKey(ex.id),v);
   const last=await lastFor(ex,v);
   el.querySelector('.last').innerHTML=last.text;
-  const progressEl=el.querySelector('.nextProgress');if(progressEl)progressEl.textContent=last.top?'Na próxima sessão, considere subir a carga e voltar para a parte baixa da faixa.':'';
+  const progressEl=el.querySelector('.nextProgress');if(progressEl)progressEl.textContent=last.suggestion||'';
   el.querySelectorAll('.kg').forEach(i=>i.value=last.weight??'');
 }
 
