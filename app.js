@@ -9,7 +9,7 @@ const timerBox=document.getElementById('timer');
 const state={
   user:null, days:[], day:null, session:null,
   settings:{auto_rest:true,sound_enabled:true,vibration_enabled:true},
-  timer:null,left:0,paused:false,restEndAt:null,restPausedRemainingMs:null,restNotificationId:null,pushEnabled:false,workoutClock:null,tab:'treino',variants:{},
+  timer:null,left:0,paused:false,restEndAt:null,restPausedRemainingMs:null,restNotificationId:null,pushEnabled:false,restContext:null,workoutClock:null,tab:'treino',variants:{},
   cardio:{modality:'Esteira',minutes:'',intensity:'moderado'}
 };
 
