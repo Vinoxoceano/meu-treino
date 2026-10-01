@@ -366,7 +366,15 @@ async function renderWorkout(c){
 
 async function loadCurrentSessionSets(renderedDayId){
   if(!state.session)return;
-  const {data=[]}=await sb.from('workout_set_logs').select('*').eq('session_id',state.session.id);
+  let data=[];
+  if(navigator.onLine){
+    const res=await sb.from('workout_set_logs').select('*').eq('session_id',state.session.id);
+    data=res.data||[];
+  }
+  const queued=readOfflineQueue().filter(x=>x.type==='set'&&x.payload?.session_id===state.session.id).map(x=>x.payload);
+  const merged=new Map();
+  [...data,...queued].forEach(x=>merged.set(x.exercise_id+':'+x.set_number,x));
+  data=[...merged.values()];
   if(state.day?.id!==renderedDayId)return;
   for(const ex of state.day.workout_exercises){
     const el=document.querySelector(`.exercise[data-ex="${ex.id}"]`);
