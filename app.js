@@ -448,8 +448,9 @@ function stopWorkoutClock(){
   state.workoutClock=null;
 }
 
-function startTimer(sec){
+function startTimer(sec,context=null){
   stopTimer();
+  state.restContext=context;
   state.paused=false;
   state.restPausedRemainingMs=null;
   state.restEndAt=Date.now()+sec*1000;
