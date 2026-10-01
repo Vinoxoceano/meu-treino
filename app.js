@@ -487,7 +487,8 @@ function finishRestTimer(){
   beep();
 }
 function drawTimer(){
-  timerBox.innerHTML=`<div class="row between"><div><div class="small muted">DESCANSO</div><div class="time">${fmt(Math.max(0,state.left))}</div></div><button id="skip" class="btn secondary">Pular</button></div><div class="row" style="margin-top:8px"><button id="plus" class="btn secondary">+30 s</button><button id="pause" class="btn secondary">${state.paused?'Continuar':'Pausar'}</button></div>`;
+  const label=state.restContext ? (state.restContext.exercise+' · '+(state.restContext.nextSet<=state.restContext.total ? ('próxima: '+state.restContext.nextSet+'ª série') : 'exercício concluído')) : 'DESCANSO';
+  timerBox.innerHTML=`<div class="row between"><div><div class="small muted">${esc(label)}</div><div class="time">${fmt(Math.max(0,state.left))}</div></div><button id="skip" class="btn secondary">Pular</button></div><div class="row" style="margin-top:8px"><button id="plus" class="btn secondary">+30 s</button><button id="pause" class="btn secondary">${state.paused?'Continuar':'Pausar'}</button></div>`;
   document.getElementById('skip').onclick=stopTimer;
   document.getElementById('plus').onclick=()=>{
     if(state.paused){
