@@ -261,18 +261,30 @@ async function lastFor(ex,variant){
     .eq('exercise_id',ex.id).order('completed_at',{ascending:false}).limit(60);
   q=variant?q.eq('variant_id',variant):q.is('variant_id',null);
   const {data=[]}=await q;
-  if(!data.length){const empty={text:'Sem histórico nesta variação.',weight:null,sessionId:null,sets:[],top:false,below:false};setCachedLast(ex.id,variant,empty);return empty;}
+  if(!data.length){const empty={text:'Sem histórico nesta variação.',weight:null,sessionId:null,sets:[],top:false,below:false,suggestion:''};setCachedLast(ex.id,variant,empty);return empty;}
   const latestSession=data[0].session_id;
   const sets=data.filter(x=>x.session_id===latestSession).sort((a,b)=>a.set_number-b.set_number);
-  const complete=sets.length>=ex.working_sets;
-  const valid=complete&&sets.slice(0,ex.working_sets).every(x=>x.technique_status==='normal');
-  const top=valid&&sets.slice(0,ex.working_sets).every(x=>x.reps>=ex.rep_max);
-  const below=complete&&sets.slice(0,ex.working_sets).filter(x=>x.reps<ex.rep_min).length>=2;
-  const weight=sets[0]?.weight_kg??null;
-  let signal='';
-  if(top)signal=' <span class="progress">· progressão disponível</span>';
-  else if(below)signal=' <span class="warning">· carga talvez alta</span>';
-  const result={text:`Último: ${weight??'—'} kg · ${sets.map(x=>x.reps).join(' / ')}${signal}`,weight,sessionId:latestSession,sets,top,below};setCachedLast(ex.id,variant,result);return result;
+  const work=sets.slice(0,ex.working_sets);
+  const complete=work.length>=ex.working_sets;
+  const valid=complete&&work.every(x=>x.technique_status==='normal');
+  const top=valid&&work.every(x=>x.reps>=ex.rep_max);
+  const below=complete&&work.filter(x=>x.reps<ex.rep_min).length>=2;
+  const weight=work[0]?.weight_kg??null;
+  const sameWeight=weight!=null&&work.every(x=>Number(x.weight_kg)===Number(weight));
+  const selected=(ex.workout_exercise_variants||[]).find(v=>v.id===variant);
+  const inc=Number(selected?.weight_increment_kg??state.settings.default_weight_increment_kg??2);
+  let signal='',suggestion='';
+  if(top&&sameWeight&&weight!=null){
+    const next=Number(weight)+(Number.isFinite(inc)&&inc>0?inc:2);
+    signal=' <span class="progress">· progressão disponível</span>';
+    suggestion='Próxima sessão: tente '+String(Number(next.toFixed(2))).replace('.',',')+' kg e volte para '+ex.rep_min+'–'+ex.rep_max+' repetições.';
+  }else if(below){
+    signal=' <span class="warning">· carga talvez alta</span>';
+    suggestion='Mantenha ou reduza a carga até voltar à faixa prescrita com boa execução.';
+  }
+  const result={text:`Último: ${weight??'—'} kg · ${work.map(x=>x.reps).join(' / ')}${signal}`,weight,sessionId:latestSession,sets:work,top,below,suggestion};
+  setCachedLast(ex.id,variant,result);
+  return result;
 }
 
 async function renderWorkout(c){
