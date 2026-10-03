@@ -9,7 +9,7 @@ const timerBox=document.getElementById('timer');
 const state={
   user:null, days:[], day:null, session:null,
   settings:{auto_rest:true,sound_enabled:true,vibration_enabled:true},
-  timer:null,left:0,paused:false,restEndAt:null,restPausedRemainingMs:null,restNotificationId:null,pushEnabled:false,restContext:null,workoutClock:null,tab:'treino',variants:{},
+  timer:null,left:0,paused:false,restEndAt:null,restPausedRemainingMs:null,restNotificationId:null,pushEnabled:false,restContext:null,workoutClock:null,wakeLock:null,tab:'treino',variants:{},
   cardio:{modality:'Esteira',minutes:'',intensity:'moderado'}
 };
 
@@ -340,7 +340,7 @@ async function renderWorkout(c){
   w.innerHTML=h;
   document.getElementById('start').onclick=startSession;
   document.getElementById('finish').onclick=finishSession;
-  if(state.session)startWorkoutClock();
+  if(state.session){startWorkoutClock();requestWorkoutWakeLock();}
   document.querySelectorAll('.setcard').forEach(card=>{
     restoreDraft(card);
     card.querySelectorAll('input,select').forEach(input=>{input.addEventListener('input',()=>saveDraft(card));input.addEventListener('change',()=>saveDraft(card))});
@@ -394,6 +394,7 @@ async function loadCurrentSessionSets(renderedDayId){
 
 async function startSession(rerender=true){
   prepareAlertAudio();
+  requestWorkoutWakeLock();
   if(state.session)return state.session;
 
   if(navigator.onLine){
@@ -499,6 +500,7 @@ async function finishSession(){
 
   state.session=null;
   saveActiveSession();
+  releaseWorkoutWakeLock();
   stopTimer();
   stopWorkoutClock();
   if(navigator.onLine)flushOfflineQueue();
@@ -519,6 +521,20 @@ function startWorkoutClock(){
 function stopWorkoutClock(){
   if(state.workoutClock)clearInterval(state.workoutClock);
   state.workoutClock=null;
+}
+
+async function requestWorkoutWakeLock(){
+  if(!state.session||document.visibilityState!=='visible'||!('wakeLock' in navigator))return;
+  try{
+    if(state.wakeLock&&!state.wakeLock.released)return;
+    state.wakeLock=await navigator.wakeLock.request('screen');
+    state.wakeLock.addEventListener('release',()=>{state.wakeLock=null},{once:true});
+  }catch{}
+}
+async function releaseWorkoutWakeLock(){
+  const lock=state.wakeLock;
+  state.wakeLock=null;
+  if(lock&&!lock.released){try{await lock.release()}catch{}}
 }
 
 function startTimer(sec,context=null){
@@ -604,7 +620,12 @@ function stopTimer(){
 function syncRestTimer(){
   if(state.timer&&!state.paused)tickRestTimer();
 }
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')syncRestTimer()});
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'){
+    syncRestTimer();
+    if(state.session)requestWorkoutWakeLock();
+  }
+});
 window.addEventListener('pageshow',syncRestTimer);
 window.addEventListener('focus',syncRestTimer);
 let alertAudio=null;
