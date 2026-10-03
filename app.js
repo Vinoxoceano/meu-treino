@@ -393,6 +393,7 @@ async function loadCurrentSessionSets(renderedDayId){
 }
 
 async function startSession(rerender=true){
+  prepareAlertAudio();
   if(state.session)return state.session;
 
   if(navigator.onLine){
@@ -424,6 +425,7 @@ async function startSession(rerender=true){
 }
 
 async function saveSet(card){
+  prepareAlertAudio();
   if(!state.session)await startSession(false);
   if(!state.session)return;
   const el=card.closest('.exercise');
@@ -605,22 +607,83 @@ function syncRestTimer(){
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')syncRestTimer()});
 window.addEventListener('pageshow',syncRestTimer);
 window.addEventListener('focus',syncRestTimer);
-function beep(){
-  if(!state.settings.sound_enabled)return;
+let alertAudio=null;
+let alertAudioUrl=null;
+
+function buildAlertAudio(){
+  if(alertAudio)return alertAudio;
   try{
-    const a=new AudioContext();
+    const sampleRate=44100;
+    const duration=1.05;
+    const samples=Math.ceil(sampleRate*duration);
+    const data=new Int16Array(samples);
+    const starts=[0,.34,.68];
+    for(const start of starts){
+      const from=Math.floor(start*sampleRate);
+      const len=Math.floor(.20*sampleRate);
+      for(let i=0;i<len&&from+i<samples;i++){
+        const t=i/sampleRate;
+        const envelope=Math.min(1,i/(sampleRate*.012))*Math.min(1,(len-i)/(sampleRate*.025));
+        data[from+i]=Math.round(Math.sin(2*Math.PI*1046.5*t)*envelope*0.55*32767);
+      }
+    }
+    const buffer=new ArrayBuffer(44+data.byteLength);
+    const view=new DataView(buffer);
+    const write=(offset,text)=>{for(let i=0;i<text.length;i++)view.setUint8(offset+i,text.charCodeAt(i))};
+    write(0,'RIFF');view.setUint32(4,36+data.byteLength,true);write(8,'WAVE');
+    write(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);
+    view.setUint32(24,sampleRate,true);view.setUint32(28,sampleRate*2,true);view.setUint16(32,2,true);view.setUint16(34,16,true);
+    write(36,'data');view.setUint32(40,data.byteLength,true);
+    new Int16Array(buffer,44).set(data);
+    alertAudioUrl=URL.createObjectURL(new Blob([buffer],{type:'audio/wav'}));
+    alertAudio=new Audio(alertAudioUrl);
+    alertAudio.preload='auto';
+    return alertAudio;
+  }catch{return null}
+}
+
+function prepareAlertAudio(){
+  if(state.settings.sound_enabled===false)return;
+  const audio=buildAlertAudio();
+  if(!audio)return;
+  try{
+    audio.volume=0;
+    const p=audio.play();
+    if(p?.then)p.then(()=>{audio.pause();audio.currentTime=0;audio.volume=1}).catch(()=>{audio.volume=1});
+    else{audio.pause();audio.currentTime=0;audio.volume=1}
+  }catch{audio.volume=1}
+}
+
+function fallbackBeep(){
+  try{
+    const Ctx=window.AudioContext||window.webkitAudioContext;
+    if(!Ctx)return;
+    const a=new Ctx();
     [0,.32,.64].forEach(delay=>{
       const o=a.createOscillator();
       const g=a.createGain();
       o.connect(g);g.connect(a.destination);
-      o.frequency.value=880;
-      g.gain.value=.08;
+      o.frequency.value=1046.5;
+      g.gain.value=.12;
       const start=a.currentTime+delay;
       o.start(start);
-      o.stop(start+.18);
+      o.stop(start+.20);
     });
-    setTimeout(()=>{try{a.close()}catch{}},1100);
+    setTimeout(()=>{try{a.close()}catch{}},1200);
   }catch{}
+}
+
+function beep(){
+  if(!state.settings.sound_enabled)return;
+  const audio=buildAlertAudio();
+  if(!audio){fallbackBeep();return}
+  try{
+    audio.pause();
+    audio.currentTime=0;
+    audio.volume=1;
+    const p=audio.play();
+    if(p?.catch)p.catch(()=>fallbackBeep());
+  }catch{fallbackBeep()}
 }
 
 async function renderHistory(c){
