@@ -344,6 +344,18 @@ async function renderWorkout(c){
   document.querySelectorAll('.setcard').forEach(card=>{
     restoreDraft(card);
     card.querySelectorAll('input,select').forEach(input=>{input.addEventListener('input',()=>saveDraft(card));input.addEventListener('change',()=>saveDraft(card))});
+    const kg=card.querySelector('.kg');
+    if(kg)kg.addEventListener('input',()=>{
+      if(Number(card.dataset.set)!==1)return;
+      const exEl=card.closest('.exercise');
+      exEl.querySelectorAll('.setcard').forEach(other=>{
+        if(other===card||other.classList.contains('done'))return;
+        const otherKg=other.querySelector('.kg');
+        if(!otherKg)return;
+        otherKg.value=kg.value;
+        saveDraft(other);
+      });
+    });
     card.querySelector('.saveSet').onclick=()=>saveSet(card);
   });
   document.querySelectorAll('.variant').forEach(sel=>sel.onchange=()=>updateVariant(sel.closest('.exercise')));
