@@ -54,7 +54,8 @@ const draftKey=(dayId,exId,setNo)=>`meu-treino:draft:${state.user?.id||'anon'}:$
 function saveDraft(card){if(!state.day)return;const ex=card.closest('.exercise');const p={variantId:ex.querySelector('.variant')?.value||null,weight:card.querySelector('.kg')?.value||'',reps:card.querySelector('.reps')?.value||'',rir:card.querySelector('.rir')?.value||'',poor:!!card.querySelector('.poor')?.checked};try{localStorage.setItem(draftKey(state.day.id,ex.dataset.ex,Number(card.dataset.set)),JSON.stringify(p))}catch{}}
 function restoreDraft(card){if(!state.day)return;const ex=card.closest('.exercise');try{const d=JSON.parse(localStorage.getItem(draftKey(state.day.id,ex.dataset.ex,Number(card.dataset.set)))||'null');if(!d)return;const v=ex.querySelector('.variant')?.value||null;if(d.variantId!==v)return;if(d.weight!==undefined)card.querySelector('.kg').value=d.weight;if(d.reps!==undefined)card.querySelector('.reps').value=d.reps;if(d.rir!==undefined)card.querySelector('.rir').value=d.rir;const poor=card.querySelector('.poor');if(poor)poor.checked=!!d.poor}catch{}}
 function clearDraft(card){const ex=card.closest('.exercise');try{localStorage.removeItem(draftKey(state.day.id,ex.dataset.ex,Number(card.dataset.set)))}catch{}}
-function markSetDone(card){card.classList.add('done');card.querySelectorAll('input,select').forEach(x=>x.disabled=true);const btn=card.querySelector('.saveSet');if(btn){btn.disabled=true;btn.textContent='Concluída ✓'}clearDraft(card)}
+function markSetDone(card){card.classList.add('done');card.classList.remove('editing');card.querySelectorAll('input,select').forEach(x=>x.disabled=true);const btn=card.querySelector('.saveSet');if(btn){btn.disabled=false;btn.textContent='Editar série ✎'}clearDraft(card)}
+function editSet(card){card.classList.add('editing');card.querySelectorAll('input,select').forEach(x=>x.disabled=false);const btn=card.querySelector('.saveSet');if(btn)btn.textContent='Salvar correção';card.querySelector('.reps')?.focus()}
 function updateExerciseProgress(el,ex){const done=el.querySelectorAll('.setcard.done').length;const count=el.querySelector('.exercise-count');if(count)count.textContent=`${done}/${ex.working_sets}`;if(done>=ex.working_sets){el.classList.add('complete','collapsed');const btn=el.querySelector('.collapseExercise');if(btn)btn.textContent='+'}}
 
 const offlineQueueKey=()=>`meu-treino:offline:${state.user?.id||'anon'}`;
@@ -356,7 +357,7 @@ async function renderWorkout(c){
         saveDraft(other);
       });
     });
-    card.querySelector('.saveSet').onclick=()=>saveSet(card);
+    card.querySelector('.saveSet').onclick=()=>card.classList.contains('done')&&!card.classList.contains('editing')?editSet(card):saveSet(card);
   });
   document.querySelectorAll('.variant').forEach(sel=>sel.onchange=()=>updateVariant(sel.closest('.exercise')));
   document.querySelectorAll('.collapseExercise').forEach(btn=>btn.onclick=()=>{const exEl=btn.closest('.exercise');exEl.classList.toggle('collapsed');btn.textContent=exEl.classList.contains('collapsed')?'+':'−'});
@@ -398,6 +399,7 @@ async function loadCurrentSessionSets(renderedDayId){
       card.querySelector('.reps').value=log.reps??'';
       card.querySelector('.rir').value=log.rir??'';
       card.querySelector('.poor').checked=log.technique_status==='poor';
+      card.dataset.completedAt=log.completed_at||'';
       markSetDone(card);
     }
     updateExerciseProgress(el,ex);
@@ -445,13 +447,14 @@ async function saveSet(card){
   const ex=state.day.workout_exercises.find(x=>x.id===el.dataset.ex);
   const reps=num(card.querySelector('.reps').value);
   if(reps==null||reps<0)return alert('Informe as repetições válidas.');
+  const correcting=card.classList.contains('done');
   const payload={
     session_id:state.session.id,exercise_id:ex.id,set_number:Number(card.dataset.set),
     weight_kg:num(card.querySelector('.kg').value),reps,
     rir:num(card.querySelector('.rir').value),
     technique_status:card.querySelector('.poor').checked?'poor':'normal',
     variant_id:el.querySelector('.variant')?.value||null,
-    completed_at:new Date().toISOString()
+    completed_at:correcting&&card.dataset.completedAt?card.dataset.completedAt:new Date().toISOString()
   };
   let saved=false;
   if(navigator.onLine){
@@ -459,9 +462,10 @@ async function saveSet(card){
     saved=!error;
   }
   if(!saved)queueOffline('set',payload);
+  card.dataset.completedAt=payload.completed_at;
   markSetDone(card);
-  updateExerciseProgress(el,ex);
-  if(state.settings.auto_rest!==false)startTimer(ex.rest_seconds,{exercise:ex.name,setNumber:Number(card.dataset.set),nextSet:Number(card.dataset.set)+1,total:ex.working_sets});
+  if(!correcting)updateExerciseProgress(el,ex);
+  if(!correcting&&state.settings.auto_rest!==false)startTimer(ex.rest_seconds,{exercise:ex.name,setNumber:Number(card.dataset.set),nextSet:Number(card.dataset.set)+1,total:ex.working_sets});
 }
 
 async function updateVariant(el){
