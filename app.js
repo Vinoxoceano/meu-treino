@@ -54,8 +54,8 @@ const draftKey=(dayId,exId,setNo)=>`meu-treino:draft:${state.user?.id||'anon'}:$
 function saveDraft(card){if(!state.day)return;const ex=card.closest('.exercise');const p={variantId:ex.querySelector('.variant')?.value||null,weight:card.querySelector('.kg')?.value||'',reps:card.querySelector('.reps')?.value||'',rir:card.querySelector('.rir')?.value||'',poor:!!card.querySelector('.poor')?.checked};try{localStorage.setItem(draftKey(state.day.id,ex.dataset.ex,Number(card.dataset.set)),JSON.stringify(p))}catch{}}
 function restoreDraft(card){if(!state.day)return;const ex=card.closest('.exercise');try{const d=JSON.parse(localStorage.getItem(draftKey(state.day.id,ex.dataset.ex,Number(card.dataset.set)))||'null');if(!d)return;const v=ex.querySelector('.variant')?.value||null;if(d.variantId!==v)return;if(d.weight!==undefined)card.querySelector('.kg').value=d.weight;if(d.reps!==undefined)card.querySelector('.reps').value=d.reps;if(d.rir!==undefined)card.querySelector('.rir').value=d.rir;const poor=card.querySelector('.poor');if(poor)poor.checked=!!d.poor}catch{}}
 function clearDraft(card){const ex=card.closest('.exercise');try{localStorage.removeItem(draftKey(state.day.id,ex.dataset.ex,Number(card.dataset.set)))}catch{}}
-function markSetDone(card){card.classList.add('done');card.classList.remove('editing');card.querySelectorAll('input,select').forEach(x=>x.disabled=true);const btn=card.querySelector('.saveSet');if(btn){btn.disabled=false;btn.textContent='Editar série ✎'}clearDraft(card)}
-function editSet(card){card.classList.add('editing');card.querySelectorAll('input,select').forEach(x=>x.disabled=false);const btn=card.querySelector('.saveSet');if(btn)btn.textContent='Salvar correção';card.querySelector('.reps')?.focus()}
+function markSetDone(card){card.classList.add('done');card.classList.remove('editing');card.querySelectorAll('input,select').forEach(x=>x.disabled=true);const btn=card.querySelector('.saveSet');if(btn){btn.disabled=true;btn.hidden=true;btn.textContent='Concluída ✓'}const edit=card.querySelector('.editSet');if(edit)edit.hidden=false;clearDraft(card)}
+function editSet(card){card.classList.add('editing');card.querySelectorAll('input,select').forEach(x=>x.disabled=false);const btn=card.querySelector('.saveSet');if(btn){btn.hidden=false;btn.disabled=false;btn.textContent='Salvar correção'}const edit=card.querySelector('.editSet');if(edit)edit.hidden=true;card.querySelector('.reps')?.focus()}
 function updateExerciseProgress(el,ex){const done=el.querySelectorAll('.setcard.done').length;const count=el.querySelector('.exercise-count');if(count)count.textContent=`${done}/${ex.working_sets}`;if(done>=ex.working_sets){el.classList.add('complete','collapsed');const btn=el.querySelector('.collapseExercise');if(btn)btn.textContent='+'}}
 
 const offlineQueueKey=()=>`meu-treino:offline:${state.user?.id||'anon'}`;
@@ -333,7 +333,7 @@ async function renderWorkout(c){
     if(vars.length)h+=`<div class="field"><label class="small muted">Variação</label><select class="variant">${vars.map(v=>`<option value="${v.id}" ${v.id===chosen?.id?'selected':''}>${esc(v.name)}</option>`).join('')}</select></div>`;
     h+=`<div class="small muted last">${last.text}</div><div class="progress nextProgress">${last.top?'Na próxima sessão, considere subir a carga e voltar para a parte baixa da faixa.':''}</div>`;
     for(let i=1;i<=ex.working_sets;i++){
-      h+=`<div class="setcard" data-set="${i}"><div class="setrow"><b>${i}ª</b><div class="field"><label class="small muted">kg</label><input class="kg" inputmode="decimal" value="${last.weight??''}"></div><div class="field"><label class="small muted">reps</label><input class="reps" inputmode="numeric"></div><div class="field"><label class="small muted">RIR</label><select class="rir"><option value="">?</option><option>3</option><option>2</option><option>1</option><option>0</option></select></div></div><div class="setactions row between"><label class="row small muted"><input class="poor" type="checkbox"> Execução comprometida</label><button class="btn secondary saveSet" type="button">Concluir série</button></div></div>`;
+      h+=`<div class="setcard" data-set="${i}"><div class="setrow"><b>${i}ª</b><div class="field"><label class="small muted">kg</label><input class="kg" inputmode="decimal" value="${last.weight??''}"></div><div class="field"><label class="small muted">reps</label><input class="reps" inputmode="numeric"></div><div class="field"><label class="small muted">RIR</label><select class="rir"><option value="">?</option><option>3</option><option>2</option><option>1</option><option>0</option></select></div></div><div class="setactions row between"><label class="row small muted"><input class="poor" type="checkbox"> Execução comprometida</label><div class="row" style="gap:8px"><button class="btn secondary saveSet" type="button">Concluir série</button><button class="editSet" type="button" hidden aria-label="Editar série" title="Corrigir série" style="border:1px solid var(--border,#555);border-radius:8px;background:transparent;color:inherit;font-size:13px;padding:5px 9px;cursor:pointer">✎ Editar</button></div></div></div>`;
     }
     h+=`</div></div>`;
   }
@@ -357,7 +357,8 @@ async function renderWorkout(c){
         saveDraft(other);
       });
     });
-    card.querySelector('.saveSet').onclick=()=>card.classList.contains('done')&&!card.classList.contains('editing')?editSet(card):saveSet(card);
+    card.querySelector('.saveSet').onclick=()=>saveSet(card);
+    card.querySelector('.editSet').onclick=()=>editSet(card);
   });
   document.querySelectorAll('.variant').forEach(sel=>sel.onchange=()=>updateVariant(sel.closest('.exercise')));
   document.querySelectorAll('.collapseExercise').forEach(btn=>btn.onclick=()=>{const exEl=btn.closest('.exercise');exEl.classList.toggle('collapsed');btn.textContent=exEl.classList.contains('collapsed')?'+':'−'});
