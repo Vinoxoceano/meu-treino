@@ -245,11 +245,11 @@ async function loadData(){
   saveDataCache();
 }
 
-function nav(){return `<div class="tabs">${['treino','historico','corpo','ajustes'].map(x=>`<button data-tab="${x}" class="${state.tab===x?'active':''}">${x[0].toUpperCase()+x.slice(1)}</button>`).join('')}</div>`}
+function nav(){return `<div class="tabs">${['treino','historico','ajustes'].map(x=>`<button data-tab="${x}" class="${state.tab===x?'active':''}">${x[0].toUpperCase()+x.slice(1)}</button>`).join('')}</div>`}
 
 function render(){
   if(!state.user){
-    root.innerHTML=`<div class="login"><div class="brand">Meu Treino</div><p class="muted">Seu treino, histórico e medidas em um só lugar.</p><div class="card"><div class="field"><label>Email</label><input id="email" type="email" autocomplete="email"></div><div class="field" style="margin-top:10px"><label>Senha</label><input id="pass" type="password" autocomplete="current-password"></div><button id="login" class="btn" style="width:100%;margin-top:14px">Entrar</button><div id="msg" class="small" style="color:#fecaca;margin-top:8px"></div></div></div>`;
+    root.innerHTML=`<div class="login"><div class="brand">Meu Treino</div><p class="muted">Seu treino e histórico em um só lugar.</p><div class="card"><div class="field"><label>Email</label><input id="email" type="email" autocomplete="email"></div><div class="field" style="margin-top:10px"><label>Senha</label><input id="pass" type="password" autocomplete="current-password"></div><button id="login" class="btn" style="width:100%;margin-top:14px">Entrar</button><div id="msg" class="small" style="color:#fecaca;margin-top:8px"></div></div></div>`;
     document.getElementById('login').onclick=login;return;
   }
   root.innerHTML=`<div class="shell"><div class="row between"><div><div class="brand">Meu Treino</div><div class="small muted">${esc(state.user.email)}</div></div><button id="logout" class="btn secondary">Sair</button></div><div id="content"></div></div>${nav()}`;
@@ -270,7 +270,6 @@ function renderTab(){
   const c=document.getElementById('content');
   if(state.tab==='treino')return renderWorkout(c);
   if(state.tab==='historico')return renderHistory(c);
-  if(state.tab==='corpo')return renderBody(c);
   return renderSettings(c);
 }
 
@@ -744,26 +743,6 @@ async function deleteSession(id){
   if(error)return alert(error.message);
   if(state.session?.id===id)state.session=null;
   await renderHistory(document.getElementById('content'));
-}
-
-async function renderBody(c){
-  c.innerHTML=`<div class="card"><h2>Medidas corporais</h2><p class="small muted">Abdômen = fita horizontal passando pelo centro do umbigo.</p><div class="measuregrid">${[['weight','Peso (kg)'],['abdomen','Abdômen (cm)'],['chest','Tórax (cm)'],['hip','Quadril (cm)'],['armr','Braço D (cm)'],['arml','Braço E (cm)'],['thighr','Coxa D (cm)'],['thighl','Coxa E (cm)'],['calfr','Panturrilha D (cm)'],['calfl','Panturrilha E (cm)']].map(([id,l])=>`<div class="field"><label>${l}</label><input id="${id}" inputmode="decimal"></div>`).join('')}</div><button id="saveBody" class="btn" style="width:100%;margin-top:14px">Salvar medidas</button></div><div class="card"><h3>Últimos registros</h3><div id="bodyHist" class="muted"></div></div>`;
-  document.getElementById('saveBody').onclick=saveBody;
-  const {data=[]}=await sb.from('workout_body_measurements').select('*').order('measured_at',{ascending:false}).limit(12);
-  document.getElementById('bodyHist').innerHTML=data.length?data.map(x=>`<div class="history-row"><b>${esc(x.measured_at)}</b><div class="small">${x.weight_kg?`Peso ${x.weight_kg} kg · `:''}${x.abdomen_cm?`Abdômen ${x.abdomen_cm} cm`:''}</div><div class="tiny muted">${[x.chest_cm&&`Tórax ${x.chest_cm}`,x.hip_cm&&`Quadril ${x.hip_cm}`,x.arm_right_cm&&`Braço D ${x.arm_right_cm}`,x.thigh_right_cm&&`Coxa D ${x.thigh_right_cm}`].filter(Boolean).join(' · ')}</div></div>`).join(''):'Nenhum registro.';
-}
-
-async function saveBody(){
-  const p={
-    user_id:state.user.id,
-    weight_kg:num(document.getElementById('weight').value),abdomen_cm:num(document.getElementById('abdomen').value),
-    chest_cm:num(document.getElementById('chest').value),hip_cm:num(document.getElementById('hip').value),
-    arm_right_cm:num(document.getElementById('armr').value),arm_left_cm:num(document.getElementById('arml').value),
-    thigh_right_cm:num(document.getElementById('thighr').value),thigh_left_cm:num(document.getElementById('thighl').value),
-    calf_right_cm:num(document.getElementById('calfr').value),calf_left_cm:num(document.getElementById('calfl').value)
-  };
-  const {error}=await sb.from('workout_body_measurements').insert(p);
-  if(error)alert(error.message);else{alert('Medidas salvas.');renderBody(document.getElementById('content'))}
 }
 
 async function sendTestNotification(){
