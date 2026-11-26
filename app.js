@@ -9,7 +9,7 @@ const timerBox=document.getElementById('timer');
 const state={
   user:null, days:[], day:null, session:null,
   settings:{auto_rest:true,sound_enabled:true,vibration_enabled:true},
-  timer:null,left:0,paused:false,restEndAt:null,restPausedRemainingMs:null,restNotificationId:null,pushEnabled:false,restContext:null,workoutClock:null,wakeLock:null,tab:'treino',variants:{},
+  timer:null,left:0,paused:false,restEndAt:null,restPausedRemainingMs:null,restNotificationId:null,pushEnabled:false,restContext:null,workoutClock:null,wakeLock:null,tab:'treino',variants:{},activeExercise:null,
   cardio:{modality:'Esteira',minutes:'',intensity:'moderado'}
 };
 
@@ -56,7 +56,29 @@ function restoreDraft(card){if(!state.day)return;const ex=card.closest('.exercis
 function clearDraft(card){const ex=card.closest('.exercise');try{localStorage.removeItem(draftKey(state.day.id,ex.dataset.ex,Number(card.dataset.set)))}catch{}}
 function markSetDone(card){card.classList.add('done');card.classList.remove('editing');card.querySelectorAll('input,select').forEach(x=>x.disabled=true);const btn=card.querySelector('.saveSet');if(btn){btn.disabled=true;btn.hidden=true;btn.textContent='Concluída ✓'}const edit=card.querySelector('.editSet');if(edit)edit.hidden=false;clearDraft(card)}
 function editSet(card){card.classList.add('editing');card.querySelectorAll('input,select').forEach(x=>x.disabled=false);const btn=card.querySelector('.saveSet');if(btn){btn.hidden=false;btn.disabled=false;btn.textContent='Salvar correção'}const edit=card.querySelector('.editSet');if(edit)edit.hidden=true;card.querySelector('.reps')?.focus()}
-function updateExerciseProgress(el,ex){const done=el.querySelectorAll('.setcard.done').length;const count=el.querySelector('.exercise-count');if(count)count.textContent=`${done}/${ex.working_sets}`;if(done>=ex.working_sets){el.classList.add('complete','collapsed');const btn=el.querySelector('.collapseExercise');if(btn)btn.textContent='+'}}
+function syncActiveExercise(){
+  document.querySelectorAll('.exercise[data-ex]').forEach(el=>{
+    const active=state.activeExercise===el.dataset.ex&&!el.classList.contains('complete');
+    el.style.background=active?'rgba(35,145,95,.16)':'';
+    el.style.outline=active?'2px solid #429b76':'';
+    const pick=el.querySelector('.activateExercise');
+    if(pick){pick.textContent=active?'● Em execução':el.classList.contains('complete')?'✓ Concluído':'▷ Selecionar exercício';pick.disabled=active||el.classList.contains('complete');}
+    const variant=el.querySelector('.variant');if(variant)variant.disabled=!active||!!el.querySelector('.setcard.done');
+    el.querySelectorAll('.setcard').forEach(card=>{
+      const editing=card.classList.contains('editing');
+      const enabled=active&&!card.classList.contains('done')||editing;
+      card.querySelectorAll('input,select,.saveSet').forEach(x=>x.disabled=!enabled);
+    });
+  });
+}
+function selectExercise(el){
+  if(el.classList.contains('complete'))return;
+  if(document.querySelector('.setcard.editing'))return alert('Salve a correção antes de trocar de exercício.');
+  state.activeExercise=el.dataset.ex;
+  el.classList.remove('collapsed');el.querySelector('.collapseExercise').textContent='−';
+  syncActiveExercise();
+}
+function updateExerciseProgress(el,ex){const done=el.querySelectorAll('.setcard.done').length;const count=el.querySelector('.exercise-count');if(count)count.textContent=`${done}/${ex.working_sets}`;if(done>=ex.working_sets){el.classList.add('complete','collapsed');const btn=el.querySelector('.collapseExercise');if(btn)btn.textContent='+';if(state.activeExercise===el.dataset.ex)state.activeExercise=null}syncActiveExercise()}
 
 const offlineQueueKey=()=>`meu-treino:offline:${state.user?.id||'anon'}`;
 const activeSessionKey=()=>`meu-treino:active:${state.user?.id||'anon'}`;
@@ -316,7 +338,7 @@ async function lastFor(ex,variant){
 
 async function renderWorkout(c){
   c.innerHTML=`<div class="card"><div class="daybar">${state.days.map(d=>`<button class="btn secondary day ${state.day?.id===d.id?'active':''}" data-day="${d.id}">${workoutLetter(d)}</button>`).join('')}</div></div><div id="w"></div>`;
-  document.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{const next=state.days.find(d=>d.id===b.dataset.day);if(state.session&&next?.id!==state.session.workout_day_id)return alert('Finalize o treino em andamento antes de trocar de dia.');state.day=next;renderWorkout(c)});
+  document.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{const next=state.days.find(d=>d.id===b.dataset.day);if(state.session&&next?.id!==state.session.workout_day_id)return alert('Finalize o treino em andamento antes de trocar de dia.');if(state.day?.id!==next?.id)state.activeExercise=null;state.day=next;renderWorkout(c)});
   const w=document.getElementById('w');
   if(!state.day){w.innerHTML='<div class="card">Nenhum treino configurado.</div>';return}
   const pendingHistory=[];
@@ -328,7 +350,7 @@ async function renderWorkout(c){
     const variantId=chosen?.id||null;
     const last=getCachedLast(ex.id,variantId)||{text:'Carregando histórico…',weight:null,top:false,below:false};
     pendingHistory.push({ex,variantId});
-    h+=`<div class="exercise" data-ex="${ex.id}"><div class="exercise-head row between"><div><h3>${esc(ex.name)}</h3><div class="small muted">${ex.working_sets} × ${ex.rep_min}–${ex.rep_max} · descanso ${fmt(ex.rest_seconds)}</div></div><div class="row"><span class="exercise-count tiny muted">0/${ex.working_sets}</span>${ex.is_secondary?'<span class="tag">secundário</span>':''}<button class="collapseExercise btn ghost" type="button">−</button></div></div><div class="exercise-body">`;
+    h+=`<div class="exercise" data-ex="${ex.id}"><div class="exercise-head row between"><div><h3>${esc(ex.name)}</h3><div class="small muted">${ex.working_sets} × ${ex.rep_min}–${ex.rep_max} · descanso ${fmt(ex.rest_seconds)}</div></div><div class="row"><span class="exercise-count tiny muted">0/${ex.working_sets}</span>${ex.is_secondary?'<span class="tag">secundário</span>':''}<button class="collapseExercise btn ghost" type="button">−</button></div></div><div style="margin:6px 0"><button type="button" class="btn ghost activateExercise" style="font-size:13px;padding:6px 10px">▷ Selecionar exercício</button></div><div class="exercise-body">`;
     if(vars.length)h+=`<div class="field"><label class="small muted">Variação</label><select class="variant">${vars.map(v=>`<option value="${v.id}" ${v.id===chosen?.id?'selected':''}>${esc(v.name)}</option>`).join('')}</select></div>`;
     h+=`<div class="small muted last">${last.text}</div><div class="progress nextProgress">${last.top?'Na próxima sessão, considere subir a carga e voltar para a parte baixa da faixa.':''}</div>`;
     for(let i=1;i<=ex.working_sets;i++){
@@ -361,6 +383,8 @@ async function renderWorkout(c){
   });
   document.querySelectorAll('.variant').forEach(sel=>sel.onchange=()=>updateVariant(sel.closest('.exercise')));
   document.querySelectorAll('.collapseExercise').forEach(btn=>btn.onclick=()=>{const exEl=btn.closest('.exercise');exEl.classList.toggle('collapsed');btn.textContent=exEl.classList.contains('collapsed')?'+':'−'});
+  document.querySelectorAll('.activateExercise').forEach(btn=>btn.onclick=()=>selectExercise(btn.closest('.exercise')));
+  syncActiveExercise();
   if(state.session)loadCurrentSessionSets(renderedDayId);
 
   Promise.all(pendingHistory.map(async ({ex,variantId})=>({ex,variantId,last:await lastFor(ex,variantId)}))).then(items=>{
@@ -439,6 +463,7 @@ async function startSession(rerender=true){
 }
 
 async function saveSet(card){
+  if(!card.classList.contains('editing')&&state.activeExercise!==card.closest('.exercise').dataset.ex)return;
   prepareAlertAudio();
   if(!state.session)await startSession(false);
   if(!state.session)return;
@@ -462,7 +487,7 @@ async function saveSet(card){
   if(!saved)queueOffline('set',payload);
   card.dataset.completedAt=payload.completed_at;
   markSetDone(card);
-  if(!correcting)updateExerciseProgress(el,ex);
+  if(!correcting)updateExerciseProgress(el,ex);else syncActiveExercise();
   if(!correcting&&state.settings.auto_rest!==false)startTimer(ex.rest_seconds,{exercise:ex.name,setNumber:Number(card.dataset.set),nextSet:Number(card.dataset.set)+1,total:ex.working_sets});
 }
 
